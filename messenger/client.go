@@ -3,23 +3,22 @@ package main
 import (
 	"fmt"
 	"net"
-	"io"
+	// "io"
 	"sync"
 	"os"
 	"strconv"
-	// "mem"
-	"unsafe"
-	// "bufio"
+	// "unsafe"
+	"encoding/json"
+	"bufio"
 )
 
 
 type sendPackage struct {
 
-	myID int
-	userID int
-    message [msgSize]byte
-	send_status int
-
+	MyID int
+	UserID int
+	Message []string
+	SendStatus int
 }
 
 var myID int
@@ -27,78 +26,143 @@ var myID int
 const (
 	testUserID = 25
 	packSize = 1036
-	msgSize = 1024
-
+	msgSizeStrings = 10
 )
 
 func failedStatus ( userID int ) {
 
 	fmt.Printf("Сообщение пользователю %d не было доставлено\n", userID);
+}
 
+func checkSendStatus( buf []byte, len int ) {
+
+	pack, err := deserialization( buf[:len] )
+
+	if err == nil && pack.SendStatus == -1 {
+		failedStatus( pack.UserID )
+	}
+	return
 }
 
 //принимает сообщения
 func getMessage( connect *net.TCPConn,  wg *sync.WaitGroup ) int {
 
-	buf := make( []byte, packSize )
+	// TODO разберись, как уcтановить размер буфера, наконец
+	getBuf := make( []byte, packSize )
 	for {
-		_, err := connect.Read(buf)
+		len, err := connect.Read(	getBuf )
 
-		if err == io.EOF {
-			break
+		if err == nil {
+			// fmt.Printf( "getMessage: error", err.Error(), "\n" )
+
+			checkSendStatus( getBuf, len )
 		}
 	}
 	wg.Done()
 	return 0
 }
 
-// спизжено из https://github.com/freboat/gomem/blob/master/mem/mem.go
 
-type usp unsafe.Pointer
-type size_t int
+func serialization( pack *sendPackage ) ( []byte, error )  {
 
-func Memcpy(dest, src unsafe.Pointer, len size_t) unsafe.Pointer {
+	buf, err:= json.Marshal( pack )
 
-	cnt := len >> 3
-	var i size_t = 0
-	for i = 0; i < cnt; i++ {
-		var pdest *uint64 = (*uint64)(usp(uintptr(dest) + uintptr(8*i)))
-		var psrc *uint64 = (*uint64)(usp(uintptr(src) + uintptr(8*i)))
-		*pdest = *psrc
+	if err != nil {
+		fmt.Printf(" \n Cound'n serialize data: ", err.Error(), "\n" )
 	}
-	left := len & 7
-	for i = 0; i < left; i++ {
-		var pdest *uint8 = (*uint8)(usp(uintptr(dest) + uintptr(8*cnt+i)))
-		var psrc *uint8 = (*uint8)(usp(uintptr(src) + uintptr(8*cnt+i)))
-
-		*pdest = *psrc
-	}
-	return dest
+	return buf, err
 }
 
+func deserialization( buf []byte ) ( sendPackage, error )  {
 
-func serialization( pack *sendPackage, buf *[]byte )  {
+	pack := sendPackage{}
+	err:= json.Unmarshal( buf, &pack )
 
+	if err != nil {
+		fmt.Printf(" \n Cound'n deserialize data: ", err.Error(), "\n" )
+	}
+	return pack, err
+}
+
+func getInput () []string {
+
+	r := bufio.NewReader( os.Stdin )
+	input:= make( []string, msgSizeStrings )
+
+	for i := range input {
+		string, err := r.ReadString('\n')
+
+		if err != nil {
+			fmt.Printf("getInput: Didn't read string \n")
+			break
+
+		} else if string == "stop\n" {
+			break
+
+		} else {
+			input[i] = string
+		}
+	}
+
+	// for i := range input{
+	// 	fmt.Printf("Read: %s \n", input[i])
+	// }
+
+	return input
+}
+
+func testSerialDeserial() {
+
+	input:= getInput()
+
+	fmt.Scan(&input)
+	fmt.Printf("Read: %s \n", input)
+
+	pack := sendPackage{
+		MyID: myID,
+		UserID: testUserID,
+		Message: input,
+		SendStatus: 0 }
+
+	fmt.Printf("Msg before serialization: %s \n", pack.Message)
+
+	buf, err := serialization( &pack )
+
+	if err != nil {
+		fmt.Printf("Serialization Test failed\n")
+	} else {
+		pack2, err := deserialization( buf )
+
+		if err != nil {
+			fmt.Printf("Deserialization Test failed\n")
+
+		} else {
+			fmt.Printf("Msg after serialization %s \n", pack2.Message)
+		}
+	}
 	return
 }
 
 // посылает сообщения
 func sendMessage( connect *net.TCPConn, wg *sync.WaitGroup ) int {
 
-	buf := make( []byte, packSize )
-	var input [msgSize]byte
-	pack := sendPackage{myID: myID, userID: testUserID, message: input, send_status: 0}
-	for {
-		fmt.Scan(&pack.message)
-		fmt.Printf("Read: %s \n", &pack.message);
+	pack := sendPackage{
+		MyID: myID,
+		UserID: testUserID,
+		SendStatus: 0 }
 
-		//todo serialization
+	for {
+		pack.Message = getInput()
+		// fmt.Printf("Read: %s \n", &pack.Message)
+
+
+		buf, err := serialization( &pack )
 		len, err := connect.Write(buf)
 
 		if err != nil {
-			fmt.Printf("Cann't send: %s \n", err.Error());
+			fmt.Printf("Cann't send: %s \n", err.Error())
 		} else {
-			fmt.Printf("Bytes sent: %d \n", len);
+			fmt.Printf("Bytes sent: %d \n", len)
 		}
 	}
 
@@ -123,11 +187,9 @@ func ConnectToServer() ( *net.TCPConn, error ) {
 		if err != nil {
 			fmt.Printf( "Connection failed: ", err.Error(), "\n" )
 			return nil, err
-
 		}
 		return connect, nil
 	}
-
 }
 
 func GetClientId() error {
@@ -143,7 +205,15 @@ func GetClientId() error {
 	return nil
 }
 
+func Tests () {
+
+	getInput ()
+	testSerialDeserial()
+}
+
 func main () {
+
+	// Tests ()
 
 	err := GetClientId()
 
