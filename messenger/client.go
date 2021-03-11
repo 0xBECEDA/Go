@@ -31,15 +31,27 @@ const (
 
 func failedStatus ( userID int ) {
 
-	fmt.Printf("Сообщение пользователю %d не было доставлено\n", userID);
+	fmt.Printf("Сообщение пользователю c id %d не было доставлено\n", userID);
 }
 
-func checkSendStatus( buf []byte, len int ) {
+func checkSendStatus( SendStatus int, UserID int ) int {
 
-	pack, err := deserialization( buf[:len] )
+	if SendStatus == -1 {
+		failedStatus( UserID )
+		return -1
+	}
+	return 0
+}
 
-	if err == nil && pack.SendStatus == -1 {
-		failedStatus( pack.UserID )
+func printRecievedMessage ( UserID int, buf []string ) {
+	fmt.Printf( "Получено сообщение от пользователя %d:  \n", UserID )
+
+	for i := range buf {
+
+		if buf[i] == "" {
+			break
+		}
+		fmt.Println( buf[i] )
 	}
 	return
 }
@@ -47,20 +59,23 @@ func checkSendStatus( buf []byte, len int ) {
 //принимает сообщения
 func getMessage( connect *net.TCPConn,  wg *sync.WaitGroup ) int {
 
-	// TODO разберись, как уcтановить размер буфера, наконец
 	getBuf := make( []byte, packSize )
+
 	for {
-		len, err := connect.Read(	getBuf )
+		len, err := connect.Read( getBuf )
 
 		if err == nil {
-			// fmt.Printf( "getMessage: error", err.Error(), "\n" )
+			pack, err := deserialization( getBuf [:len] )
 
-			checkSendStatus( getBuf, len )
+			if err == nil && 0 == checkSendStatus( pack.SendStatus, pack.UserID ) {
+				printRecievedMessage ( pack.UserID, pack.Message )
+			}
 		}
 	}
 	wg.Done()
 	return 0
 }
+
 
 
 func serialization( pack *sendPackage ) ( []byte, error )  {

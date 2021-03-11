@@ -17,14 +17,20 @@ type sendPackage struct {
 	SendStatus int
 }
 
+type connection struct {
+
+	ClientID int
+	Connect *net.TCPConn
+}
+
 const (
 	testUserID = 25
-	packSize = 1036
+	packSize = 1000
 	msgSizeStrings = 10
+	maxClients = 10
 )
 
-// TODO разберись, как утановить размер буфера, наконец
-var buf =  make([]byte, packSize)
+var ConnectionsTable = make(map[int]*net.TCPConn)
 
 func serialization( pack *sendPackage ) ( []byte, error )  {
 
@@ -47,38 +53,97 @@ func deserialization( buf []byte ) ( sendPackage, error )  {
 	return pack, err
 }
 
-func sendMessege( connect *net.TCPConn, len int ) {
-
-	// buf - глобальная var, осторожно!!
-	pack, err := deserialization( buf[:len] )
-
-	if err == nil {
-
-		// TODO проверить, зарегестрирован ли юзер,
-		// которому отправляется msg
-		pack.SendStatus = -1
-
-		sendBuf, err := serialization( &pack )
-		len, err := connect.Write( sendBuf )
-
-		if err != nil {
-			fmt.Printf("Cann't send: %s \n", err.Error())
-		} else {
-			fmt.Printf("Bytes sent: %d \n", len)
-		}
+func checkErrorSendMessage( err error, len int ) {
+	if err != nil {
+		fmt.Printf("Cann't send: %s \n", err.Error())
+	} else {
+		fmt.Printf("Bytes sent: %d \n", len)
 	}
-
 	return
 }
 
-func getMessege( connect *net.TCPConn ) {
+func sendMessege( myConnect *net.TCPConn, buf []byte, len int ) {
+
+	pack, err := deserialization( buf[:len] )
+
+	if err == nil {
+		// проверяем существование юзера, которому
+		// отправляем сообщение
+		connectUser, found := ConnectionsTable[pack.UserID]
+		fmt.Println("found ", found )
+
+		// нашли
+		if found == true {
+			fmt.Println("connectUser ", connectUser )
+			sendBuf, err := serialization( &pack )
+			len, err := connectUser.Write( sendBuf )
+			checkErrorSendMessage( err, len)
+
+		// не нашли
+		} else {
+			pack.SendStatus = -1
+
+			sendBuf, err := serialization( &pack )
+			len, err := myConnect.Write( sendBuf )
+			checkErrorSendMessage( err, len)
+		}
+	}
+	return
+}
+
+func getMessege( connect *net.TCPConn, ch chan connection, ch2 chan bool ) {
+
+	remembered := 0
+	buf := make([]byte, packSize)
 
 	for {
 		len, err := connect.Read( buf )
 
 		if err == nil {
 			fmt.Printf("message recieved, len %d bytes \n", len );
-			sendMessege( connect, len )
+
+			if remembered == 0 {
+				pack, err := deserialization( buf[:len] )
+
+				// отправить данные клиента на регистрацию
+				if err == nil {
+					newConnection:= connection{ ClientID: pack.MyID,
+						                        Connect:  connect }
+					ch <- newConnection
+
+					// регистрация законцена?
+					finished :=  <- ch2
+					if finished == true {
+						remembered = 1
+					}
+				}
+			}
+			sendMessege( connect, buf, len )
+		}
+	}
+	return
+}
+
+func RegisterNewClient( ch chan connection, ch2 chan bool ) {
+
+	for {
+		newConnection, ok := <- ch
+
+		// канал закрыт?
+		if ok == false {
+			break
+		}
+		// сохранить нового клиента
+		ConnectionsTable[newConnection.ClientID] = newConnection.Connect
+
+		// проверяем, что действительно сохранилось
+		_, found := ConnectionsTable[newConnection.ClientID]
+
+		if found == true {
+			fmt.Println("RegisterNewClient: зарегестрирован новый клиент  ",
+				newConnection.ClientID,  newConnection.Connect )
+			// сигнализируем, что закончили
+			ch2 <- found
 		}
 	}
 	return
@@ -95,7 +160,14 @@ func main () {
 		os.Exit(1)
 
 	} else {
-		fmt.Println("Server: l %v", l)
+
+		fmt.Println(" SERVER RUNS \n")
+		// создаем поток для регистрации соединений:
+		// связываем id клиента с его соединением и запоминаем
+		registerClientsChan := make( chan connection, 100 )
+		registerClientsChanResult := make( chan bool )
+		go RegisterNewClient( registerClientsChan, registerClientsChanResult )
+
 		for {
 		conn, err := l.AcceptTCP()
 
@@ -104,8 +176,8 @@ func main () {
 			os.Exit(1)
 		}
 
-		fmt.Printf( "server conn %v \n", conn);
-		go getMessege( conn )
+		// fmt.Printf( "server conn %v \n", conn);
+		go getMessege( conn, registerClientsChan, registerClientsChanResult )
 		}
 	}
 
