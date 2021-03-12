@@ -22,11 +22,9 @@
   import (
       "fmt"
       "net"
-      // "io"
-      "sync"
+      // "sync"
       "os"
       "strconv"
-      // "unsafe"
       "encoding/json"
       "bufio"
   )
@@ -69,6 +67,7 @@
   var myID int
 
   <<_consts>>
+  <<_ChatTable>>
 #+END_SRC
 
 
@@ -89,15 +88,15 @@
 #+END_SRC
 
 Заводим константы: кол-во строк, которое вмещается в буфер, тестовый id
-принимающего клиента и размер буфера:
+принимающего юзера, которому отправляется пакет, и размер буфера:
 
-[TODO:gmm] сделать интерфейс, который позволит клиенту-отправителю
-задавать id клиента-получателя при отправке сообщения.
+[TODO:gmm] как установить размер буфера, чтоб в него влез любой пакет?
+(возможно, если пакет слишком большой - т.е. сообщение слишком большое -
+оно должно быть разделено на n пакетов машиной?)
 
 #+NAME: _consts
 #+BEGIN_SRC go :noweb yes
   const (
-      testUserID = 25
       packSize = 1036
       msgSizeStrings = 10
   )
@@ -134,6 +133,42 @@
       // }
 
       return input
+  }
+
+  <<_makePackage>>
+#+END_SRC
+
+Как только считывание прекращено, формируем пакет на отправку:
+- парсим ввод
+- формируем пакет
+
+Пока что считаем, что первой строкой юзер вводит id клиента, которому
+хочет послать пакет (в финальной версии юзер будет переключаться между
+окнами в браузере )
+
+[TODO:gmm] Что насчет бесед, в которх больше 2 участников?
+
+#+NAME: _makePackage
+#+BEGIN_SRC go :noweb yes
+  func makePackage ( input []string ) ( sendPackage, error ) {
+
+      // убираем '\n' после числа
+      string := input[0]
+      n :=  len(string) - 1
+
+      RecieverUserID, err := strconv.Atoi( string[:n] )
+      pack := sendPackage{}
+      if err != nil {
+          fmt.Printf("makePackage: Didn't convert id of user: ", err.Error(), "\n")
+
+      } else {
+          pack.MyID = myID
+          pack.UserID = RecieverUserID
+          pack.Message = input [1:]
+          pack.SendStatus = 0
+
+      }
+      return pack, err
   }
 #+END_SRC
 
@@ -172,13 +207,52 @@
   <<_sendMessage>>
 #+END_SRC
 
-Коннект к серверу вызывается из мэйна. Если коннект совершился, то
-создаем 2 потока: на отправку и на прием сообщений. Чтоб мэйн не
-завершился до того, как потоки завершатся, уcтанавливаем ~sync.WaitGroup~
-и ждем, пока они не завтршатся.
+Коннект к серверу вызывается из мэйна. Если коннект совершился, то в цикле:
+- читаем сообщение юзера с консоли
+- парсим (вытаскиваем id юзера, которому отправляется пакет ) и формируем
+  пакет на отправку
+- проверяем id юзера - принимающей стороны, открыты ли под него потоки на
+  отправку и на получение пакетов.
+
+Идея в том, что на каждй чат полагается своя пара потоков на получение и
+отправку сообщений. Иначе будет невозможно писать нескольким юзерам
+одновременно, как и принимать от них сообщения. Потоки не будут напрямую
+связаны с каким-то конкретным чатом. Пакеты, готовые к отправке, будут
+писаться в очередь - канал - и любой свободный поток на отправку будет
+отправлять пакет.
+
+Чтоб это было возможно, надо проверять, пишем мы условно в новый чат или
+нет. Поэтому в тестовом режиме создаем хэш-таблицу, где ключ - это ~id~
+юзера, с которым ведется чат, а значение - ~true~. Юзаем хэш-таблицу,
+потому что она позволяет находить эементы за O(1) шагов в отличие от
+массива.
+
+#+NAME: _ChatTable
+#+BEGIN_SRC go :noweb yes
+  var ChatTable = make(map[int]bool)
+#+END_SRC
+
+#+NAME: _IsItNewChat
+#+BEGIN_SRC go :noweb yes
+  func IsItNewChat ( id int ) bool {
+      _, found := ChatTable[id]
+      return found
+  }
+#+END_SRC
+
+Если чат уже создан, то просто помещаем пакет в очередь. Если
+нет то:
+
+- создаем запись в хэш-таблице
+- создаем новую пару потоков
+- кладем пакет в очередь
+
+[TODO:gmm] цикл сейчас беконечный. Придумать условие, на котором он
+закончится - возможно просто ввод "quit".
 
 #+NAME: _main
 #+BEGIN_SRC go :noweb yes :tangle client.go
+  <<_IsItNewChat>>
   <<_getInput>>
   <<_testSerialDeserial>>
   func main () {
@@ -192,8 +266,6 @@
           os. Exit(1)
       }
 
-      fmt.Printf( " Client id %d \n", myID )
-
       connect, err := ConnectToServer()
 
       if err != nil {
@@ -202,14 +274,28 @@
       }
 
       fmt.Printf( " Have a connection with server \n" )
-      var wg sync.WaitGroup
+      // var wg sync.WaitGroup
+      SendPackageQueue := make( chan sendPackage, 100 )
 
-      go sendMessage( connect, &wg )
-      wg.Add(1)
-      go getMessage( connect, &wg )
-      wg.Add(1)
-      wg.Wait()
+      for {
+          input := getInput()
+          SendPack, err := makePackage( input )
 
+          if err == nil {
+              found := IsItNewChat ( SendPack.UserID )
+
+              if found == false {
+                  go sendMessage( connect, SendPackageQueue )
+                  go getMessage( connect )
+                  // go sendMessage( connect, &wg, SendPackageQueue )
+                  // wg.Add(1)
+                  // go getMessage( connect, &wg )
+                  // wg.Add(1)
+                  // wg.Wait()
+              }
+              SendPackageQueue <- SendPack
+          }
+      }
   }
 #+END_SRC
 
@@ -229,8 +315,8 @@
   <<_printRecievedMessage>>
 
   //принимает сообщения
-  func getMessage( connect *net.TCPConn,  wg *sync.WaitGroup ) int {
-
+  // func getMessage( connect *net.TCPConn,  wg *sync.WaitGroup ) int {
+  func getMessage( connect *net.TCPConn ) int {
       getBuf := make( []byte, packSize )
 
       for {
@@ -244,7 +330,7 @@
               }
           }
       }
-      wg.Done()
+      // wg.Done()
       return 0
   }
 #+END_SRC
@@ -300,38 +386,28 @@
 #+NAME: _sendMessage
 #+BEGIN_SRC go :noweb yes
   // посылает сообщения
-  func sendMessage( connect *net.TCPConn, wg *sync.WaitGroup ) int {
+  // func sendMessage( connect *net.TCPConn, wg *sync.WaitGroup, ch chan SendPackage ) int {
 
-      pack := sendPackage{
-          MyID: myID,
-          UserID: testUserID,
-          SendStatus: 0 }
-
+  func sendMessage( connect *net.TCPConn, ch chan sendPackage ) int {
       for {
-          pack.Message = getInput()
-          // fmt.Printf("Read: %s \n", &pack.Message)
-
-
+          pack := <- ch
           buf, err := serialization( &pack )
-          len, err := connect.Write(buf)
 
-          if err != nil {
-              fmt.Printf("Cann't send: %s \n", err.Error())
-          } else {
-              fmt.Printf("Bytes sent: %d \n", len)
-          }
+          if err == nil {
+               len, err := connect.Write(buf)
+
+               if err != nil {
+                   fmt.Printf("Cann't send: %s \n", err.Error())
+               } else {
+                   fmt.Printf("Bytes sent: %d \n", len)
+               }
+           }
       }
-
-      wg.Done()
+      // wg.Done()
       return 0
   }
   <<_serialization>>
 #+END_SRC
-
-[TODO:gmm] Каждый раз, когда клиент открывает новый чат, отквыется новая
-пара потоков на получение и отпавку сообщений. Сообщения на отправку
-будут находиться в общей очереди сообщений и каждый поток на отправку
-будет брать сообщение из очереди и отправлять его.
 
 Методы ~read~ и ~write~, которые позволяют писать в соединение и читать
 из него, принимают только слайсы в качестве аргументов. Это значит, что
@@ -388,32 +464,29 @@
       fmt.Scan(&input)
       fmt.Printf("Read: %s \n", input)
 
-      pack := sendPackage{
-          MyID: myID,
-          UserID: testUserID,
-          Message: input,
-          SendStatus: 0 }
+      pack, err := makePackage( input )
+      if err == nil {
+          fmt.Printf("Msg before serialization: %s \n", pack.Message)
 
-      fmt.Printf("Msg before serialization: %s \n", pack.Message)
-
-      buf, err := serialization( &pack )
-
-      if err != nil {
-          fmt.Printf("Serialization Test failed\n")
-      } else {
-          pack2, err := deserialization( buf )
+          buf, err := serialization( &pack )
 
           if err != nil {
-              fmt.Printf("Deserialization Test failed\n")
-
+              fmt.Printf("Serialization Test failed\n")
           } else {
-              fmt.Printf("Msg after serialization %s \n", pack2.Message)
+              pack2, err := deserialization( buf )
+
+              if err != nil {
+                  fmt.Printf("Deserialization Test failed\n")
+
+              } else {
+                  fmt.Printf("Msg after serialization %s \n", pack2.Message)
+              }
           }
       }
       return
   }
 
-  <<_Tests>>
+      <<_Tests>>
 #+END_SRC
 
 [TODO:gmm] Придумать, как сделать разные окна для чатов.
