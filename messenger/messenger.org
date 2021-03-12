@@ -1,18 +1,39 @@
+#+STARTUP: showall indent hidestars
+
 * Интро
 Идея простая: переписать свой старый консольный мессенджер с си на
 го. При этом добавить шифрование, поддержку множества клиентов и какойто
 интерфейс.
 
 * Механизм работы
+** Клиент
 
 Нужно организовать пересылку сообщения от конкретного клиента к
 конкретному клиенту. Т.е. у каждого клиента - зарегистрированного
-пользователя -  должны быть уникальный id, который не будет меняться от
+пользователя -  должен быть уникальный id, который не будет меняться от
 подключения к подключению.
 
-Сервер будет хранить у себя хэш-таблицу, где ключ - это уникальный
-неменяющийся id клиента, а значение - ~conn~ этого клиента. Поэтому
-сервер сможет легко находить соединение с клиентом, которому предназначен пакет
+Подключенные пакеты:
+
+#+NAME: _packages
+#+BEGIN_SRC go :noweb yes :tangle client.go
+  package main
+
+  import (
+      "fmt"
+      "net"
+      // "io"
+      "sync"
+      "os"
+      "strconv"
+      // "unsafe"
+      "encoding/json"
+      "bufio"
+  )
+
+  <<_sendPackage>>
+  <<_myID>>
+#+END_SRC
 
 Структура пакета клиента для отправки:
 - id юзера, ~который отправляет~
@@ -20,76 +41,690 @@
 - буфер, в котором содержится сообщение
 - статус отправки сообщения
 
-Клиент работает в 2 потока: один принимает сообщения, другой отправляет.
+Пока что уникальный id клиента вводится самим пользователем при запуске клиента -
+параметр командной строки. Т.е. id может меняться от запуска к запуску.
 
-[TODO:gmm] Возможно организовать очередь сообщений: все пакеты на
-отправку будут находиться в единой очереди. Каждый раз, когда клиент
-хочет отправить сообщениеновому юзеру - открыть новый чат - открываются 2
-новых потока: один на отправку, другой на принятие сообщений. Когда
-клиент хочет отправить кому-то сообщение, пакет кладется в общую очередь
-сообщений (возможно, очередь будет представлять собой канал, чтоб
-избежать мьютексов), а любой свободный на отправку поток будет отправлять
-пакет.
+[TODO:gmm] Сделать обработчик ошибок отправки и зарезервировать константы
+под значения ошибок.
+
+#+NAME: _sendPackage
+#+BEGIN_SRC go :noweb yes
+  type sendPackage struct {
+
+      MyID int
+      UserID int
+      Message []string
+      SendStatus int
+  }
+
+#+END_SRC
+
+На данный момент ID клиента задается как аргумент командной строки при
+запуске клиента. Поэтому заводим на стороне клиента глобальную переменную
+и функцию, которая вытащит id клиента из аргументов командной строки и
+поместит в переменную:
+
+#+NAME: _myID
+#+BEGIN_SRC go :noweb yes
+  var myID int
+
+  <<_consts>>
+#+END_SRC
+
+
+#+NAME: _GetClientId
+#+BEGIN_SRC go :noweb yes :tangle client.go
+  func GetClientId() error {
+
+      id, err := strconv.Atoi( os.Args[1] )
+
+      if err != nil {
+          return err
+
+      } else {
+          myID = id
+      }
+      return nil
+  }
+#+END_SRC
+
+Заводим константы: кол-во строк, которое вмещается в буфер, тестовый id
+принимающего клиента и размер буфера:
+
+[TODO:gmm] сделать интерфейс, который позволит клиенту-отправителю
+задавать id клиента-получателя при отправке сообщения.
+
+#+NAME: _consts
+#+BEGIN_SRC go :noweb yes
+  const (
+      testUserID = 25
+      packSize = 1036
+      msgSizeStrings = 10
+  )
+#+END_SRC
+
+Функция, которая считывает вывод с консоли строка за строкой, пока не
+встретит строку ~"stop"~ - это является сигналом, что считывание надо
+прекратить.
+
+#+NAME: _getInput
+#+BEGIN_SRC go :noweb yes
+  func getInput () []string {
+
+      r := bufio.NewReader( os.Stdin )
+      input:= make( []string, msgSizeStrings )
+
+      for i := range input {
+          string, err := r.ReadString('\n')
+
+          if err != nil {
+              fmt.Printf("getInput: Didn't read string \n")
+              break
+
+          } else if string == "stop\n" {
+              break
+
+          } else {
+              input[i] = string
+          }
+      }
+
+      // for i := range input{
+      // 	fmt.Printf("Read: %s \n", input[i])
+      // }
+
+      return input
+  }
+#+END_SRC
+
+Открываем сокет типа TCP и коннектимся к серверу (у сервака и клиентов
+должен быть один и тот же порт (?))
+
+Возвращаем структуру соеднения ~conn~ и ~nil~ как значение ошибки в
+сулчае успеха. Иначе печатаем сообщение об ошибке, вместо ~conn~
+возвращаем ~nil~ и саму ошибку.
+
+#+NAME: _ConnectToServer
+#+BEGIN_SRC go :noweb yes :tangle client.go
+  func ConnectToServer() ( *net.TCPConn, error ) {
+
+      serVaddr :=  "localhost:3425"
+      tcpAddr, err := net.ResolveTCPAddr("tcp", serVaddr)
+
+      if err != nil {
+          println("ResolveTCPAddr failed:", err.Error())
+          return nil, err
+
+      } else {
+
+          // fmt.Printf( "Client tcp addr: %v \n",  tcpAddr)
+          connect , err := net.DialTCP( "tcp", nil, tcpAddr)
+
+          if err != nil {
+              fmt.Printf( "Connection failed: ", err.Error(), "\n" )
+              return nil, err
+          }
+          return connect, nil
+      }
+  }
+
+  <<_getMessage>>
+  <<_sendMessage>>
+#+END_SRC
+
+Коннект к серверу вызывается из мэйна. Если коннект совершился, то
+создаем 2 потока: на отправку и на прием сообщений. Чтоб мэйн не
+завершился до того, как потоки завершатся, уcтанавливаем ~sync.WaitGroup~
+и ждем, пока они не завтршатся.
+
+#+NAME: _main
+#+BEGIN_SRC go :noweb yes :tangle client.go
+  <<_getInput>>
+  <<_testSerialDeserial>>
+  func main () {
+
+      // Tests ()
+
+      err := GetClientId()
+
+      if err != nil {
+          fmt.Printf( " Didn't get client id: ", err.Error(), "\n" )
+          os. Exit(1)
+      }
+
+      fmt.Printf( " Client id %d \n", myID )
+
+      connect, err := ConnectToServer()
+
+      if err != nil {
+          fmt.Printf( "\n Connection failed, exit \n" )
+          os. Exit(1)
+      }
+
+      fmt.Printf( " Have a connection with server \n" )
+      var wg sync.WaitGroup
+
+      go sendMessage( connect, &wg )
+      wg.Add(1)
+      go getMessage( connect, &wg )
+      wg.Add(1)
+      wg.Wait()
+
+  }
+#+END_SRC
+
+Функция ~getMessage~:
+- принимает пакет
+- десериализует пакет
+- проверяет его статус
+- если статус 0, то печатает сообщение
+- если нет, ошибка должна быть обработана
+
+[TODO:gmm] Написать обработчик ошибок доставки.
+
+#+NAME: _getMessage
+#+BEGIN_SRC go :noweb yes
+  <<_checkSendStatus>>
+  <<_failedStatus>>
+  <<_printRecievedMessage>>
+
+  //принимает сообщения
+  func getMessage( connect *net.TCPConn,  wg *sync.WaitGroup ) int {
+
+      getBuf := make( []byte, packSize )
+
+      for {
+          len, err := connect.Read( getBuf )
+
+          if err == nil {
+              pack, err := deserialization( getBuf [:len] )
+
+              if err == nil && 0 == checkSendStatus( pack.SendStatus, pack.UserID ) {
+                  printRecievedMessage ( pack.UserID, pack.Message )
+              }
+          }
+      }
+      wg.Done()
+      return 0
+  }
+#+END_SRC
+
+Проверяет статус пакета:
+
+#+NAME: _checkSendStatus
+#+BEGIN_SRC go :noweb yes
+  func checkSendStatus( SendStatus int, UserID int ) int {
+
+      if SendStatus == -1 {
+          failedStatus( UserID )
+          return -1
+      }
+      return 0
+  }
+#+END_SRC
+
+Печатает сообщение об ошибке, если статус ~failed~:
+
+#+NAME: _failedStatus
+#+BEGIN_SRC go :noweb yes
+  func failedStatus ( userID int ) {
+
+      fmt.Printf("Сообщение пользователю c id %d не было доставлено\n", userID);
+  }
+#+END_SRC
+
+Печатает пришедшее сообщение, если все ок:
+
+#+NAME: _printRecievedMessage
+#+BEGIN_SRC go :noweb yes
+  func printRecievedMessage ( UserID int, buf []string ) {
+      fmt.Printf( "Получено сообщение от пользователя %d:  \n", UserID )
+
+      for i := range buf {
+
+          if buf[i] == "" {
+              break
+          }
+          fmt.Println( buf[i] )
+      }
+      return
+  }
+#+END_SRC
+
+
+Функция ~sendMessage~:
+
+- формирует пакет
+- сериализует его
+- посылает в соединение
+#+NAME: _sendMessage
+#+BEGIN_SRC go :noweb yes
+  // посылает сообщения
+  func sendMessage( connect *net.TCPConn, wg *sync.WaitGroup ) int {
+
+      pack := sendPackage{
+          MyID: myID,
+          UserID: testUserID,
+          SendStatus: 0 }
+
+      for {
+          pack.Message = getInput()
+          // fmt.Printf("Read: %s \n", &pack.Message)
+
+
+          buf, err := serialization( &pack )
+          len, err := connect.Write(buf)
+
+          if err != nil {
+              fmt.Printf("Cann't send: %s \n", err.Error())
+          } else {
+              fmt.Printf("Bytes sent: %d \n", len)
+          }
+      }
+
+      wg.Done()
+      return 0
+  }
+  <<_serialization>>
+#+END_SRC
+
+[TODO:gmm] Каждый раз, когда клиент открывает новый чат, отквыется новая
+пара потоков на получение и отпавку сообщений. Сообщения на отправку
+будут находиться в общей очереди сообщений и каждый поток на отправку
+будет брать сообщение из очереди и отправлять его.
+
+Методы ~read~ и ~write~, которые позволяют писать в соединение и читать
+из него, принимают только слайсы в качестве аргументов. Это значит, что
+придется делать сериализацию и десериализацию, чтоб принимать и
+отправлять пакеты, имеющую выше описанную структуру:
+
+#+NAME: _serialization
+#+BEGIN_SRC go :noweb yes
+  func serialization( pack *sendPackage ) ( []byte, error )  {
+
+      buf, err:= json.Marshal( pack )
+
+      if err != nil {
+          fmt.Printf(" \n Cound'n serialize data: ", err.Error(), "\n" )
+      }
+      return buf, err
+  }
+  <<_deserialization>>
+#+END_SRC
+
+#+NAME: _deserialization
+#+BEGIN_SRC go :noweb yes
+  func deserialization( buf []byte ) ( sendPackage, error )  {
+
+      pack := sendPackage{}
+      err:= json.Unmarshal( buf, &pack )
+
+      if err != nil {
+          fmt.Printf(" \n Cound'n deserialize data: ", err.Error(), "\n" )
+      }
+      return pack, err
+  }
+
+#+END_SRC
+
+Тесты:
+
+#+NAME: _Tests
+#+BEGIN_SRC go :noweb yes
+  func Tests () {
+
+      getInput ()
+      testSerialDeserial()
+  }
+#+END_SRC
+
+
+#+NAME: _testSerialDeserial
+#+BEGIN_SRC go :noweb yes
+  func testSerialDeserial() {
+
+      input:= getInput()
+
+      fmt.Scan(&input)
+      fmt.Printf("Read: %s \n", input)
+
+      pack := sendPackage{
+          MyID: myID,
+          UserID: testUserID,
+          Message: input,
+          SendStatus: 0 }
+
+      fmt.Printf("Msg before serialization: %s \n", pack.Message)
+
+      buf, err := serialization( &pack )
+
+      if err != nil {
+          fmt.Printf("Serialization Test failed\n")
+      } else {
+          pack2, err := deserialization( buf )
+
+          if err != nil {
+              fmt.Printf("Deserialization Test failed\n")
+
+          } else {
+              fmt.Printf("Msg after serialization %s \n", pack2.Message)
+          }
+      }
+      return
+  }
+
+  <<_Tests>>
+#+END_SRC
+
+[TODO:gmm] Придумать, как сделать разные окна для чатов.
+В каждом окне должно отражаться имя юзера и история переписки с
+ним. Видимо, это придется делать на вебе.
+
+** Сервер
+
+Подключенные пакеты:
+
+#+NAME: _servPackeges
+#+BEGIN_SRC go :noweb yes :tangle server.go
+  package main
+
+  import (
+      "fmt"
+      "net"
+      "os"
+      "encoding/json"
+      // "io"
+  )
+
+  <<_sendPackage>>
+  <<_servConnection>>
+#+END_SRC
+
+Сервер должен быть способен разослать пакет от любого клиента любому
+клиенту. Для этого ему нужно связать id клиента с его структурой
+соединения: получая пакет от какого-то клиента, сервер будет его
+десериализовать, читать ~id~ клиента, которому предназначен пакет, и
+находить по этому ~id~ его стрктуру соединения, сериализовать пакет и
+отправлять в нужное соединение.
 
 Структура соединения на сервере:
 - id клиента - по умолчанию -1
 - его структура ~conn~, по умолчанию nil
 
-[TODO:gmm] В идеале, при регистрации нового пользователя, сервер сразу получает его
-уникальный id, записывает его в структуру, а затем ждет, когда клиент
-подключится к нему, дополняет структур его ~conn~, а затем из id и conn
-создает новую запись для хэш-таблицы.
+#+NAME: _servConnection
+#+BEGIN_SRC go :noweb yes
+  type connection struct {
 
-Таким образом, у нас должен быть массив "неполных" структур, где есть
-только id новых клиентов, но еще нет соединений с ними. Когда соединение
-появляется, формирутеся запись в хэш-таблице, а структура из массива
-структур очищается. Массив и хэш0таблицу придется блокировать мьютексом
-или чем-то еще, поскольку это разделяемый ресурс.
+      ClientID int
+      Connect *net.TCPConn
+  }
 
-Чтоб у сервера был полный набор айдиников существующих клиентов, должна
-быть база данных существующих клиентов. Тогда при запуске мессенджера, эта база данных
-будет посылаться серверу, сервер будет ее у себя распаковывать и ждать
-соединений от клиентов. Не знаю, насколько это оптимально.
+<<_servConsts>>
+#+END_SRC
 
-Как будет работать сейчас, тестовая модель:
-Базы данных клиентов нет.
-Уникальный id клиента вводится самим пользователем при запуске клиента -
-параметр командной строки. Т.е. id может меняться от запуска к запуску.
+Константы:
 
-На стороне сервера есть массив структур соединений. Есть указатель на ближайшую свободную
-структуру.
+#+NAME: _servConsts
+#+BEGIN_SRC go :noweb yes
+  const (
+      testUserID = 25
+      packSize = 1000
+      msgSizeStrings = 10
+  )
 
-Клиент устанавливает соединение. Сервер получает его ~conn~ - но еще не
-знает, какой у клиента уникальный ~id~, потому что первый пакет до сих
-пор не пришел. Соединение ~conn~ записывается в массив структур,
-указатель на ближайшую доступную структуру для записи сдвигается. Клиент
-шлет первый пакет: сервер разбирает этот пакет, читает ~id~ клиента и
-ищет структуру клиента по его ~conn~. Вписывает ~id~ в структуру. Так мы
-связываем уникальный id клиента и его соединение. Таким образом, когда
-какой-то другой клиент захочет отправить сообщение этому клиенту, мы
-найдем его по его id и отправим в его соединение сообщение.
+  <<_servConnectionsTable>>
+#+END_SRC
 
-В случае если сервер не смог отправить сообщение от клиента к клиенту -
-например, принимающая сторона еще не подсоединилась или нет ее id, то
-сервер отправляет отправляющей стороне ее же сообщение со статусом
-failed - меняет поле в структуре пакета. Если клеинт принимает такое
-сообщение, то этот пакет будет помещен в конец глобальной очереди
-сообщений для повторной отправки в будущем.
+Эффективнее всего хранить соединения и их id в хэш-таблице: сложность на
+вставку, удаление или поиск элемента - это O(n). Ключ - это id, значение -
+структура ~conn~.
 
-* Реализация идей, изложенных выше
+Глобальная переменная, разделяемый ресурс для потоков, осторожно!
+#+NAME: _servConnectionsTable
+#+BEGIN_SRC go :noweb yes
+  var ConnectionsTable = make(map[int]*net.TCPConn)
+#+END_SRC
 
-** Пункт первый
-- создать структуру пакета на стороне клиента
-- создать функцию на стороне клиента, которая будет разбирать, с каким
-  статусом пришло сообщение от сервера: если со статусом ~failed~, то
-  напечатать сообщение, что пакет не был доставлен адресату. В противном
-  случае напечатать полученное сообщение
+Создадим отдельный поток, который будет отвечать за регистрацию новых
+пользователей на сервере.
 
-На этом этапе сервер получает пакет от клиента, меняет у него статус и
-возвращает пакет клиенту.
+В качестве параметров он принимает 2 канала: из  первого он читает
+заполненые структуры соединений, которые преобразует в новые записи
+хэш-таблицы, а во второй отправляет ~true~,  если вставка новой записи
+удалась. Таким образом у нас есть способ сообщить другим потокам, что
+запись прошла успешно.
 
-Проблема в том, что методы ~read()~ и ~write()~ для чтения и записи в
-соединение принимают в качестве буфера только слайс.
+#+NAME: _servRegisterNewClient
+#+BEGIN_SRC go :noweb yes :tangle server.go
+  func RegisterNewClient( ch chan connection, ch2 chan bool ) {
 
-Поэтому структуру пакета нужно сериализовать для отправки, а потом
-десериализовать для парсинга.
+      for {
+          newConnection, ok := <- ch
+
+          // канал закрыт?
+          if ok == false {
+              break
+          }
+          // сохранить нового клиента
+          ConnectionsTable[newConnection.ClientID] = newConnection.Connect
+
+          // проверяем, что действительно сохранилось
+          _, found := ConnectionsTable[newConnection.ClientID]
+
+          if found == true {
+              fmt.Println("RegisterNewClient: зарегестрирован новый клиент  ",
+                  newConnection.ClientID,  newConnection.Connect )
+              // сигнализируем, что закончили
+              ch2 <- found
+          }
+      }
+      return
+  }
+  <<_serialization>>
+  <<_servMain>>
+#+END_SRC
+
+Алгоритм работы сервера.
+Открываем сокет на "прослушку". Если все ок, то :
+- создаем два канала: один, чтоб посылать ~RegisterNewClient~ структуры
+  соединений, другой, чтоб она могла сигнализировать, когда закончит
+  вставку.
+- вызываем горутину с ~RegisterNewClient~
+- вызываем прослушку сокета на предмет новых соединений
+
+#+NAME: _servRegisterNewClient
+#+BEGIN_SRC go :noweb yes :tangle server.go
+  func openListener() int {
+      service := "localhost:3425"
+      tcpAddr, err := net.ResolveTCPAddr("tcp", service)
+      l, err := net.ListenTCP("tcp", tcpAddr)
+
+      if err != nil {
+          fmt.Println("Server: listening error", err.Error())
+          os.Exit(1)
+
+      } else {
+          registerClientsChan := make( chan connection, 100 )
+          registerClientsChanResult := make( chan bool )
+          go RegisterNewClient( registerClientsChan, registerClientsChanResult )
+
+          AcceptNewConnections( l, registerClientsChan, registerClientsChanResult )
+      }
+      return 0
+  }
+
+  <<_servAcceptNewConnections>>
+#+END_SRC
+
+Слушает сокет на предмет новых соединений. Если такое соединение есть,
+вызывает ~getMessege~, который будет слушать соединение на предмет новых
+пакетов. Ему передается: структура соединения и два канала для общения с
+~RegisterNewClient~.
+
+#+NAME: _servAcceptNewConnections
+#+BEGIN_SRC go :noweb yes
+  func AcceptNewConnections( l *net.TCPListener, ch chan connection, ch2 chan bool ) {
+      fmt.Println(" SERVER RUNS \n")
+
+      for {
+          conn, err := l.AcceptTCP()
+
+          if err != nil {
+              fmt.Println("Accept error", err.Error())
+              os.Exit(1)
+          }
+
+          go getMessege( conn, ch, ch2 )
+      }
+  }
+#+END_SRC
+
+~getMessege~ принимает пакеты из конкретного соединения. Каждое
+соединение обладает своим собственным буфером, куда пишутся и откуда
+читаются сообщения. Так же есть переменная ~remembered~: по
+умолчанию 0. Если выставлена в 1, то соединение уже зарегестрировано в
+хэш-таблице.
+
+Проблема в том, что мы не можем зарегать нового клиента до тех пор, пока
+он ен отправит первый пакет: нам не известен его уникальный ~id~, при
+подключении известна только структура его соединения.
+
+Поэтому алгоритм работы такой:
+- получили сообщение
+- если ~remembered~ == 0, значит, соединение еще не зарегано:
+  - десериализуем пакет (функция десериализации та же, что и на клиенте)
+  - читаем из структуры пакета id клиента, который его отправил
+  - формируем из него и структуры соединения ~conn~ структуру соединения
+  - шлем ее в канал ~RegisterNewClient~
+  - дожидаемся, пока придет ответ, что все ок (так мы предохраняемся от
+    ситуации, когда юзер хочет отправить сообщения сам себе, но он еще не
+    зареган на сервере. Если не дождаться ответа от ~RegisterNewClient~,
+    то юзеру придет ошибка, что ему не удалось отправить сообщение самому
+    себе, по причине, что его не существует как зареганного клиента (что
+    полный бред)
+  - если все ок, меняем значение ~remembered~ на единицу
+- вызываем отправку сообщения сообщение
+
+#+NAME: _servGetMessege
+#+BEGIN_SRC go :noweb yes :tangle server.go
+  func getMessege( connect *net.TCPConn, ch chan connection, ch2 chan bool ) {
+
+      remembered := 0
+      buf := make([]byte, packSize)
+
+      for {
+          len, err := connect.Read( buf )
+
+          if err == nil {
+              fmt.Printf("message recieved, len %d bytes \n", len );
+
+              if remembered == 0 {
+                  pack, err := deserialization( buf[:len] )
+
+                  // отправить данные клиента на регистрацию
+                  if err == nil {
+                      newConnection:= connection{ ClientID: pack.MyID,
+                          Connect:  connect }
+                      ch <- newConnection
+
+                      // регистрация законцена?
+                      finished :=  <- ch2
+                      if finished == true {
+                          remembered = 1
+                      }
+                  }
+              }
+              sendMessege( connect, buf, len )
+          }
+      }
+      return
+  }
+
+  <<_servSendMessege>>
+#+END_SRC
+
+~sendMessege~ отправляет сообщение. В качестве параметра принимает
+структуру соединения, буфер, в который был считан полученный пакет, и
+размер пакета в байтах.
+
+Алгоритм:
+- десериализовать буфер - вернее, только то кол-во байт, которое было
+  прочитано из соединения. Если попытаться десериализовать весь буфер, то
+  его незаполненная часть будет заполнена символом ~\x00~ и метод
+  ~json.Unmarshal~ выдаст ошибку
+- если все ок, то:
+  - проверить, существует ли юзер, которому хотим отправить сообщение:
+    запрашиваем значение по ключу id изхэш-таблицы напрямую.
+
+    [TODO:gmm] сделать доступ к таблице через канал. Хотя значения в ней не
+    перезаписываются, но дополняются новыми. В результате может возникнуть
+    ситуация, когда в одно и то же время один поток пишет значени в таблицу,
+    регистрируя нового клиента, а другой - пытается получить запись этого
+    клиента, чтоб отравить ему сообщение.
+
+   - если запись найдена:
+    - сериализуем пакет (функция сериализации та же, что на клиенте)
+    - отпарвляем в соединение
+    - проверяем ошибку, если есть
+  - иначе отправляем в то же соединение, из которого пришел пакет, этот
+    же пакет со статусом отправки -1
+
+#+NAME: _servSendMessege
+#+BEGIN_SRC go :noweb yes
+  <<_servCheckErrorSendMessage>>
+
+  func sendMessege( myConnect *net.TCPConn, buf []byte, len int ) {
+
+      pack, err := deserialization( buf[:len] )
+
+      if err == nil {
+          // проверяем существование юзера, которому
+          // отправляем сообщение
+          connectUser, found := ConnectionsTable[pack.UserID]
+          fmt.Println("found ", found )
+
+          // нашли
+          if found == true {
+              fmt.Println("connectUser ", connectUser )
+              sendBuf, err := serialization( &pack )
+              len, err := connectUser.Write( sendBuf )
+              checkErrorSendMessage( err, len)
+
+          // не нашли
+          } else {
+              pack.SendStatus = -1
+
+              sendBuf, err := serialization( &pack )
+              len, err := myConnect.Write( sendBuf )
+              checkErrorSendMessage( err, len)
+          }
+      }
+      return
+  }
+
+#+END_SRC
+
+Проверяет ошибку отправки:
+#+NAME: _servCheckErrorSendMessage
+#+BEGIN_SRC go :noweb yes
+  func checkErrorSendMessage( err error, len int ) {
+      if err != nil {
+          fmt.Printf("Cann't send: %s \n", err.Error())
+      } else {
+          fmt.Printf("Bytes sent: %d \n", len)
+      }
+      return
+  }
+#+END_SRC
+
+Вызываем процесс из ~main~:
+
+#+NAME: _servMain
+#+BEGIN_SRC go :noweb yes
+
+  func main () {
+      openListener()
+      return
+  }
+
+#+END_SRC
