@@ -28,9 +28,9 @@ func runServer(t *testing.T) {
 	//запускаем команду
 	cmd.Start()
 	// проверяем, что напечатал сервак
-	string, _ := r.ReadString('\n')
+	string, err := r.ReadString('\n')
 
-	if string != "SERVER IS ON \n" {
+	if err != nil || string != "SERVER IS ON \n" {
 		t.Errorf("Ожидал результат 'SERVER IS ON', а получил %s \n", string)
 		t.FailNow()
 	}
@@ -70,8 +70,8 @@ func CheckMultiInputClient( stdout io.ReadCloser, stdin io.WriteCloser, id int,
 	w.Flush()
 
 	// Убеждаемся, что сообщение пришло от этого же клиента
-	string, _ := r.ReadString('\n')
-	if string != recieveMsg {
+	string, err := r.ReadString('\n')
+	if err != nil || string != recieveMsg {
 		t.Errorf("checkMultiInputClient id: " + idString)
 		t.Errorf("ожидал ' %s ' получил ' %s' ", recieveMsg, string)
 		t.Fail()
@@ -79,9 +79,9 @@ func CheckMultiInputClient( stdout io.ReadCloser, stdin io.WriteCloser, id int,
 
 	// проверяем, что все сообщение дошло в целости и сохранности
 	for i := 1; i < 4; i++ {
-		string, _ := r.ReadString('\n')
+		string, err := r.ReadString('\n')
 
-		if string != msg[i] {
+		if err != nil || string != msg[i] {
 			t.Errorf("checkMultiInputClient id: " + idString)
 			t.Errorf("ожидал ' %s ' получил ' %s' ", msg[i], string)
 			t.Fail()
@@ -111,9 +111,13 @@ func SendMessageToNonExistendClient( stdout io.ReadCloser, stdin io.WriteCloser,
 	}
 	// сливаем в поток
 	w.Flush()
-	string, _ := r.ReadString('\n')
+	t.Logf("\n SendMessageToNonExistendClient %d: wrote to connection", id)
 
-	if string != recieveMsg {
+	string, err := r.ReadString('\n')
+
+	t.Logf("\n SendMessageToNonExistendClient %d: string read", id)
+
+	if err != nil || string != recieveMsg {
 		t.Errorf("SendMessageToNonExistendClient id: " + MyIdString)
 		t.Errorf("ожидал ' %s ' получил ' %s' ", recieveMsg, string)
 		t.Fail()
@@ -171,29 +175,31 @@ func ClientTestsGroup(t *testing.T, ch1 chan string, ch2 chan int) {
 	}
 
 	cmd.Start()
+	t.Logf("\n id %d: Run all tests", id)
 
 	t.Run("ClientTestsGroup", func (t *testing.T) {
 		t.Run ( "CheckClientConnectionToServer", func (t *testing.T) {
 			CheckClientConnectionToServer( stdout, t)
 		})
 
+		t.Logf("CheckClientConnectionToServer finished\n")
 		t.Run ("SendMessageToNonExistendClient", func (t *testing.T) {
 			SendMessageToNonExistendClient( stdout, stdin, id, t )
 		})
 
-		// t.Logf("id %d: CheckClientConnectionToServer done", id)
+		t.Logf("\n id %d: CheckClientConnectionToServer done", id)
 
 		t.Run ("CheckMultiInputClient", func (t *testing.T) {
 			CheckMultiInputClient( stdout, stdin, id, t )
 		})
 
-		// t.Logf("id %d: CheckMultiInputClient done", id)
+		t.Logf("\n id %d: CheckMultiInputClient done", id)
 
 		t.Run ("CheckQuitClient", func (t *testing.T) {
 			CheckQuitClient( stdin, id, t, cmd )
 		})
 
-		// t.Logf("id %d: CheckQuitClient done", id)
+		t.Logf("\n id %d: CheckQuitClient done", id)
 	})
 }
 
@@ -203,16 +209,18 @@ func ClientTestsGroup(t *testing.T, ch1 chan string, ch2 chan int) {
 // глобальной (!) переменной ClientId
 func CreateIdForClient(MsgChan chan string, ResultChan chan int) {
 	ClientId := 1
-	msg := <- MsgChan
+	for {
+		msg := <- MsgChan
 
-	switch msg {
+		switch msg {
 
-	case "Get new id" :
-		ResultChan <- ClientId
-		ClientId += 1
+		case "Get new id" :
+			ResultChan <- ClientId
+			ClientId += 1
 
-	case "Get max id" :
-		ResultChan <- ClientId
+		case "Get max id" :
+			ResultChan <- ClientId
+		}
 	}
 }
 
@@ -225,10 +233,12 @@ func TestMessenger(t *testing.T) {
 	go CreateIdForClient( CreateIdForClientChanMsg, CreateIdForClientChanResult )
 
 	t.Run("runServer", func (t *testing.T) {
+		t.Parallel()
 		runServer( t )
 	})
 
 	t.Run("RunClients", func (t *testing.T) {
+		t.Parallel()
 
 		// for i := 0; i < 2; i++ {
 			t.Run("ClientTestsGroup", func (t *testing.T) {
@@ -237,12 +247,12 @@ func TestMessenger(t *testing.T) {
 					CreateIdForClientChanResult )
 			})
 
-			// 	t.Run("ClientTestsGroup2", func (t *testing.T) {
-			// 	// t.Parallel()
-			// 	ClientTestsGroup( t, CreateIdForClientChanMsg,
-			// 		CreateIdForClientChanResult )
+				t.Run("ClientTestsGroup2", func (t *testing.T) {
+				t.Parallel()
+				ClientTestsGroup( t, CreateIdForClientChanMsg,
+					CreateIdForClientChanResult )
 
-			// })
+			})
 		// }
 	})
 }

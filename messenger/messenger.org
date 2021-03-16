@@ -22,7 +22,8 @@
   import (
       "fmt"
       "net"
-      // "sync"
+      "sync"
+      "time"
       "os"
       "strconv"
       "encoding/json"
@@ -215,7 +216,51 @@
   <<_sendMessage>>
 #+END_SRC
 
-Коннект к серверу вызывается из мэйна. Если коннект совершился, то в цикле:
+Коннект к серверу вызывается из мэйна. Если коннект совершился, то:
+- запускаем функционал для подсчеты живых частов - если они все
+  отрубились, то выходим (потом исправим выход на что-то менее
+  радикальное)
+- запускаем ~driver loop~, который и будет поддерживать всю работу
+  клиента, пока хотя бы один чат жив.
+
+#+NAME: _main
+#+BEGIN_SRC go :noweb yes :tangle client.go
+  <<_IsItNewChat>>
+  <<_getInput>>
+  <<_testSerialDeserial>>
+  <<_driverLoop>>
+  func main () {
+
+      // Tests ()
+
+      err := GetClientId()
+
+      if err != nil {
+          fmt.Printf( " Didn't get client id: ", err.Error(), "\n" )
+          os. Exit(1)
+      }
+
+      connect, err := ConnectToServer()
+
+      if err != nil {
+          fmt.Printf( "\n Connection failed, exit \n" )
+          os. Exit(1)
+      }
+
+      fmt.Printf( "Have a connection with server \n" )
+      var wg sync.WaitGroup
+      // отслеживаем, сколько "живых" диалогов
+      DoneChannel := make( chan string, 100 )
+      go countDialogs( DoneChannel )
+      go IsAnyChatAlive( &wg )
+      wg.Add(1)
+      go driverLoop( &wg, DoneChannel, connect )
+      wg.Wait()
+  }
+#+END_SRC
+
+
+~Driver loop~:
 - читаем сообщение юзера с консоли
 - парсим (вытаскиваем id юзера, которому отправляется пакет ) и формируем
   пакет на отправку
@@ -238,6 +283,7 @@
 #+NAME: _ChatTable
 #+BEGIN_SRC go :noweb yes
   var ChatTable = make(map[int]bool)
+  <<_clientAliveAndNew>>
 #+END_SRC
 
 #+NAME: _IsItNewChat
@@ -257,31 +303,10 @@
 - проверяем статус клиента: он сигнализирует о том, хочет ли юзер выйти в
   оффлайн. Пока что просто тестовый вариант, чтоб не убивать прогу
   аварийно.
-#+NAME: _main
-#+BEGIN_SRC go :noweb yes :tangle client.go
-  <<_IsItNewChat>>
-  <<_getInput>>
-  <<_testSerialDeserial>>
-  func main () {
 
-      // Tests ()
-
-      err := GetClientId()
-
-      if err != nil {
-          fmt.Printf( " Didn't get client id: ", err.Error(), "\n" )
-          os. Exit(1)
-      }
-
-      connect, err := ConnectToServer()
-
-      if err != nil {
-          fmt.Printf( "\n Connection failed, exit \n" )
-          os. Exit(1)
-      }
-
-      fmt.Printf( " Have a connection with server \n" )
-      // var wg sync.WaitGroup
+#+NAME: _driverLoop
+#+BEGIN_SRC go :noweb yes
+  func driverLoop( wg *sync.WaitGroup, DoneChannel chan string, connect *net.TCPConn ) {
       SendPackageQueue := make( chan sendPackage, 100 )
       SendLastPackageResult := make( chan bool, 100 )
 
@@ -294,7 +319,8 @@
 
               if found == false {
                   go sendMessage( connect, SendPackageQueue, SendLastPackageResult )
-                  go getMessage( connect )
+                  go getMessage( connect, DoneChannel )
+                  DoneChannel <- "new"
                   // go sendMessage( connect, &wg, SendPackageQueue )
                   // wg.Add(1)
                   // go getMessage( connect, &wg )
@@ -305,8 +331,12 @@
           }
           // клиент решил выйти из чата
           if clientStatus == -5 {
+              // удостовериваемся, что последний отправленный пакет дошел
               result:= <- SendLastPackageResult
               if result == true {
+                  // выключаем поток IsAnyChatAlive (его отслеживает main,
+                  // чтоб выйти )
+                  wg.Done()
                   break
               }
           }
@@ -319,9 +349,21 @@
 - десериализует пакет
 - проверяет его статус
 - если статус 0, то печатает сообщение
-- если нет, ошибка должна быть обработана
-
+- если меньше нуля, то это ошибка и она должна быть обработана
 [TODO:gmm] Написать обработчик ошибок доставки.
+
+Так же ~getMesage~ принимает "служебные" сообщения от сервера: может
+случиться так, что соединение с сервером будет разорвано. Надо это как-то
+отследить. Поэтому при каждом получении какого-то сообщения сервер будет
+отсылать пустой пакет, содержащий только статус отправки, который будет
+как бы сигнализировать "все окей, сервер работает, пакет
+дошел". Установим таймер на приемку сообщений: если в течение 10 секунд
+не пришло подтверждение от сервера, то мы считаем, что соединение
+разорвано, ~getMessage~ отправляет сообщение в канал для функции .
+
+[TODO:gmm] Понятно, что если сообщение не дошло, то это не повод вырубать
+клиент. Надо искать другой доступный сервер или что-то еще. Но пока что
+просто будем вырубать клиента, потому что так проще тестировать.
 
 #+NAME: _getMessage
 #+BEGIN_SRC go :noweb yes
@@ -331,10 +373,12 @@
 
   //принимает сообщения
   // func getMessage( connect *net.TCPConn,  wg *sync.WaitGroup ) int {
-  func getMessage( connect *net.TCPConn ) int {
+  func getMessage( connect *net.TCPConn, ch chan string) int {
       getBuf := make( []byte, packSize )
 
       for {
+          timeoutDuration := 10 * time.Second
+          connect.SetReadDeadline( time.Now().Add(timeoutDuration))
           len, err := connect.Read( getBuf )
 
           if err == nil {
@@ -343,11 +387,18 @@
               if err == nil && 0 == checkSendStatus( pack.SendStatus, pack.UserID ) {
                   printRecievedMessage ( pack.UserID, pack.Message )
               }
-          }
+
+              } else {
+              fmt.Printf("Ошибка чтения: возможно разорвано соединение\n")
+              break
+              }
       }
+      ch <- "quit"
       // wg.Done()
       return 0
   }
+
+  <<_clientCountDialogs>>
 #+END_SRC
 
 Проверяет статус пакета:
@@ -356,11 +407,16 @@
 #+BEGIN_SRC go :noweb yes
   func checkSendStatus( SendStatus int, UserID int ) int {
 
-      if SendStatus == -1 {
+      switch SendStatus {
+
+      case -1:
           failedStatus( UserID )
           return -1
+      case 1:
+          return 1
+      default:
+          return 0
       }
-      return 0
   }
 #+END_SRC
 
@@ -379,19 +435,74 @@
 #+NAME: _printRecievedMessage
 #+BEGIN_SRC go :noweb yes
   func printRecievedMessage ( UserID int, buf []string ) {
-      fmt.Printf( "Получено сообщение от пользователя %d:  \n", UserID )
+      fmt.Printf( "Получено сообщение от пользователя %d:\n", UserID )
 
       for i := range buf {
 
           if buf[i] == "" {
               break
           }
-          fmt.Println( buf[i] )
+          fmt.Printf( buf[i] )
       }
       return
   }
 #+END_SRC
 
+Реализуем функционал, который будет следить, чтоб все диалоги клиента не
+оказались закрыты - например в случае, если соединение с сервером было
+разорвано. В таком случае клиент завершится, не дожидаясь сигнала от
+пользователя.
+
+[TODO:gmm] В будущем это надо поменять, попытаться переключиться на
+другой сервер или просто выдать сообщение об ошибке, но не выходить из
+клиента.
+
+#+NAME: _clientAliveAndNew
+#+BEGIN_SRC go :noweb yes
+  var alive int
+  var new int
+#+END_SRC
+
+~countDialogs~ принимает в качестве аргумента канал, по которому от
+других потоков ей приходят сообщения.
+Если пришло сообщение ~"new"~ , значит открыт новый диалог.
+Тогда значение ~alive~ и ~new~ инкрементируется. Если
+приходит сообение ~quit~, то ~alive~ декрементируется.
+
+#+NAME: _clientCountDialogs
+#+BEGIN_SRC go :noweb yes
+  func countDialogs ( ch chan string ) {
+      for {
+          msg := <- ch
+          if msg == "new" {
+              alive += 1
+              new += 1
+              // fmt.Printf("countDialogs: amount of chats %d \n", new)
+          } else if msg == "quit" {
+              alive -= 1
+              // fmt.Printf("countDialogs: amount of alive chats %d \n", alive)
+          }
+      }
+  }
+
+  <<_IsAnyChatAlive>>
+#+END_SRC
+
+А эта функция проверяет, жив ли хоть один чат.
+
+#+NAME: _IsAnyChatAlive
+#+BEGIN_SRC go :noweb yes
+  func IsAnyChatAlive ( wg *sync.WaitGroup ) {
+      for {
+          if new > 0 && alive == 0 {
+              // fmt.Printf("IsAnyChatAlive done \n ")
+              wg.Done()
+              break
+          }
+      }
+  }
+
+#+END_SRC
 
 Функция ~sendMessage~:
 
@@ -409,12 +520,12 @@
           buf, err := serialization( &pack )
 
           if err == nil {
-               len, err := connect.Write(buf)
+               _, err := connect.Write(buf)
 
                if err != nil {
                    fmt.Printf("Cann't send: %s \n", err.Error())
                } else {
-                   fmt.Printf("Bytes sent: %d \n", len)
+                   // fmt.Printf("Bytes sent: %d \n", len)
                    if pack.SendStatus == -5 {
                        ch2 <- true
                    }
@@ -684,7 +795,7 @@ sync.WaitGroup~, при каждом запуске нового потока о
 #+BEGIN_SRC go :noweb yes
   func AcceptNewConnections( l *net.TCPListener, ch chan connection, ch2 chan bool,
                              ch3 chan string ) {
-      fmt.Println(" SERVER RUNS \n")
+      fmt.Println("SERVER IS ON \n")
 
       for {
 
@@ -873,15 +984,15 @@ sync.WaitGroup~, при каждом запуске нового потока о
 #+NAME: _servCountClients
 #+BEGIN_SRC go :noweb yes
   func countClients ( ch chan string ) {
-      fmt.Printf("countClients\n")
+      // fmt.Printf("countClients\n")
       for {
           msg := <- ch
           if msg == "new" {
-              fmt.Printf("countClients: read 'new' \n")
+              // fmt.Printf("countClients: read 'new' \n")
               alive += 1
               new += 1
           } else if msg == "quit" {
-              fmt.Printf("countClients: read 'quit' \n")
+              // fmt.Printf("countClients: read 'quit' \n")
               alive -= 1
           }
       }
@@ -931,3 +1042,13 @@ sync.WaitGroup~, при каждом запуске нового потока о
   - отправить сообщение несуществующему клиенту
   - выйти
 - когда все клиенты просигнализировали о выходе, отключить сервер
+
+Как я виду написание тестов:
+ Есть скрипт тестов, написанный на го. В качестве параметра он принимает
+ n клиентов, которые должен запустить, симитировав их запуск из шела (это
+ вообще возможно?). А дальше для каждого клиента выполнить описанный выше
+ скрипт.
+
+Какие могут быть препятствия: клиент считывает ввод с ~stdin~, если я
+запущу n клиентов изнутри теста, можно ли будет им всем передавать инпут
+так, как будто он передан в ~stdin~?
