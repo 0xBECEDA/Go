@@ -6,32 +6,64 @@ import (
 	"io"
 	"bufio"
 	"os/exec"
+	// "time"
+	// "fmt"
 )
 
 const(
 	MaxClients = 10
 )
-// RUNSERVER
-// запускает сервер и убеждается, что
-// он заработал
-func runServer(t *testing.T) {
-	// готовим на выполнение команду
-	// ./server
-	cmd := exec.Command("./server")
-	// привязываем к ее stsdout пайп
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Errorf("runServer: не удалось привязать пайп к stdout \n")
+
+// createIdForClient
+// создает айдишник для клиента, путем увеличения
+// глобальной (!) переменной ClientId
+func CreateIdForClient(MsgChan chan string, ResultChan chan int) {
+	ClientId := 1
+	for {
+		msg := <- MsgChan
+
+		switch msg {
+
+		case "Get new id" :
+			ResultChan <- ClientId
+			ClientId += 1
+
+		case "Get max id" :
+			ResultChan <- ClientId
+		}
 	}
+}
+
+// CompareString
+// Читает из заданного стрима строку и сравнивает с ожидаемой строкой.
+// Если результатом чтения является ошибка EOF, то пробует считать еще раз -
+// скорее всего данные еще дошли в стрим.
+// Если и в этом случае ошибка != nil, то возвращает fail
+func CompareString(t *testing.T, testName string, WaitedString string,
+	stdout io.ReadCloser, id int ) {
 
 	r := bufio.NewReader( stdout )
-	//запускаем команду
-	cmd.Start()
-	// проверяем, что напечатал сервак
 	string, err := r.ReadString('\n')
 
-	if err != nil || string != "SERVER IS ON \n" {
-		t.Errorf("Ожидал результат 'SERVER IS ON', а получил %s \n", string)
+	if err == io.EOF {
+		string, err := r.ReadString('\n')
+		if err != nil {
+			t.Errorf("%s id %d: ошибка чтения: %s \n", testName, id, err )
+			t.FailNow()
+
+		} else if string != WaitedString {
+			t.Errorf("%s id %d: ожидал строку: \n %s а получил: \n %s \n", testName,
+				id, WaitedString, string )
+			t.FailNow()
+		}
+
+	} else if err!= nil {
+		t.Errorf("%s id %d: ошибка чтения: %s \n", testName, id, err )
+		t.FailNow()
+
+	} else if string != WaitedString {
+		t.Errorf("%s id %d: ожидал строку: \n %s а получил: \n %s \n", testName,
+			id, WaitedString, string )
 		t.FailNow()
 	}
 }
@@ -42,7 +74,7 @@ func runServer(t *testing.T) {
 func CheckMultiInputClient( stdout io.ReadCloser, stdin io.WriteCloser, id int,
 	t *testing.T) {
 
-	r := bufio.NewReader( stdout )
+	// r := bufio.NewReader( stdout )
 	w := bufio.NewWriter( stdin )
 	idString := strconv.Itoa(id)
 	recieveMsg := "Получено сообщение от пользователя " + idString + ":\n"
@@ -70,22 +102,11 @@ func CheckMultiInputClient( stdout io.ReadCloser, stdin io.WriteCloser, id int,
 	w.Flush()
 
 	// Убеждаемся, что сообщение пришло от этого же клиента
-	string, err := r.ReadString('\n')
-	if err != nil || string != recieveMsg {
-		t.Errorf("checkMultiInputClient id: " + idString)
-		t.Errorf("ожидал ' %s ' получил ' %s' ", recieveMsg, string)
-		t.Fail()
-	}
+	CompareString(t , "checkMultiInputClient", recieveMsg, stdout , id )
 
-	// проверяем, что все сообщение дошло в целости и сохранности
+	// Проверяем, что все сообщение дошло в целости и сохранности
 	for i := 1; i < 4; i++ {
-		string, err := r.ReadString('\n')
-
-		if err != nil || string != msg[i] {
-			t.Errorf("checkMultiInputClient id: " + idString)
-			t.Errorf("ожидал ' %s ' получил ' %s' ", msg[i], string)
-			t.Fail()
-		}
+		CompareString(t , "checkMultiInputClient", msg[i], stdout , id )
 	}
 }
 
@@ -106,23 +127,18 @@ func SendMessageToNonExistendClient( stdout io.ReadCloser, stdin io.WriteCloser,
 		if err != nil {
 			t.Errorf("SendMessageToNonExistendClient id " + MyIdString + ": \n")
 			t.Errorf("не удалось вписать строку в буфер \n")
-			t.Fail()
+			t.FailNow()
 		}
 	}
 	// сливаем в поток
 	w.Flush()
-	t.Logf("\n SendMessageToNonExistendClient %d: wrote to connection", id)
 
 	string, err := r.ReadString('\n')
 
-	t.Logf("\n SendMessageToNonExistendClient %d: string read", id)
-
-	if err != nil || string != recieveMsg {
-		t.Errorf("SendMessageToNonExistendClient id: " + MyIdString)
-		t.Errorf("ожидал ' %s ' получил ' %s' ", recieveMsg, string)
-		t.Fail()
-	}
+	// проверям, что пришло в ответ от клиента
+	CompareString(t , "SendMessageToNonExistendClient", recieveMsg, stdout , id )
 }
+
 // CheckQuitClient
 // проверяет, завершается ли клиент, если послать ему
 // "quit"
@@ -139,37 +155,64 @@ func CheckQuitClient( stdin io.WriteCloser, id int, t *testing.T, cmd *exec.Cmd 
 
 // CheckClientConnectionToServer
 // проверяет, подключилсяли клиент к серверу
-func CheckClientConnectionToServer( stdout io.ReadCloser,  t *testing.T ) {
+func CheckClientConnectionToServer( stdout io.ReadCloser,  t *testing.T, id int ) {
+
+	msg := "Have a connection with server \n"
+	CompareString(t , "CheckClientConnectionToServer", msg, stdout , id )
+}
+
+// TESTSERVER
+// запускает сервер и убеждается, что
+// он заработал
+func TestServer(t *testing.T) {
+	// готовим на выполнение команду
+	// ./server
+	cmd := exec.Command("./server")
+	// привязываем к ее stsdout пайп
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Errorf("runServer: не удалось привязать пайп к stdout \n")
+	}
 
 	r := bufio.NewReader( stdout )
+	//запускаем команду
+	cmd.Start()
+	// проверяем, что напечатал сервак
 	string, err := r.ReadString('\n')
 
-	if err == nil {
-		if string != "Have a connection with server \n" {
-			t.Errorf("CheckClientConnectionToServer connection error: %s \n", string)
-			t.FailNow()
-		}
+	if err != nil {
+		t.Errorf("runServer: oшибка %s \n", err)
+
+	} else if string != "SERVER IS ON \n" {
+		t.Errorf("Ожидал результат 'SERVER IS ON', а получил %s \n", string)
+		t.FailNow()
 	}
 }
 
-// RUNCLIENT
-// запускает клиента и проводит с ним серию тестов
-func ClientTestsGroup(t *testing.T, ch1 chan string, ch2 chan int) {
+// TestClientGroup
+// запускает клиент и проводит с ним серию тестов
+func TestClientGroup(t *testing.T) {
+
+	ch1 := make( chan string, 100 )
+	ch2 := make( chan int, 100 )
+	go CreateIdForClient( ch1, ch2 )
+
+	// for i := 0; i < 2; i++ {
+
 	//получили id для клиента
 	ch1 <- "Get new id"
 	id := <- ch2
 
 	cmd := exec.Command("./client", strconv.Itoa(id))
-	stdout, err := cmd.StdoutPipe()
+	stdout, err1 := cmd.StdoutPipe()
+	stdin, err2 := cmd.StdinPipe()
 
-	if err != nil {
+	if err1 != nil {
 		t.Errorf("runClient: не удалось привязать пайп к stdout \n")
 		t.FailNow()
 	}
 
-	stdin, err := cmd.StdinPipe()
-
-	if err != nil {
+	if err2 != nil {
 		t.Errorf("runClient: не удалось привязать пайп к stdin \n")
 		t.FailNow()
 	}
@@ -177,82 +220,24 @@ func ClientTestsGroup(t *testing.T, ch1 chan string, ch2 chan int) {
 	cmd.Start()
 	t.Logf("\n id %d: Run all tests", id)
 
+	// запускает тесты над открытым клиентом
 	t.Run("ClientTestsGroup", func (t *testing.T) {
 		t.Run ( "CheckClientConnectionToServer", func (t *testing.T) {
-			CheckClientConnectionToServer( stdout, t)
+			CheckClientConnectionToServer( stdout, t, id)
 		})
 
-		t.Logf("CheckClientConnectionToServer finished\n")
 		t.Run ("SendMessageToNonExistendClient", func (t *testing.T) {
 			SendMessageToNonExistendClient( stdout, stdin, id, t )
 		})
-
-		t.Logf("\n id %d: CheckClientConnectionToServer done", id)
 
 		t.Run ("CheckMultiInputClient", func (t *testing.T) {
 			CheckMultiInputClient( stdout, stdin, id, t )
 		})
 
-		t.Logf("\n id %d: CheckMultiInputClient done", id)
-
 		t.Run ("CheckQuitClient", func (t *testing.T) {
 			CheckQuitClient( stdin, id, t, cmd )
 		})
 
-		t.Logf("\n id %d: CheckQuitClient done", id)
 	})
-}
-
-
-// createIdForClient
-// создает айдишник для клиента, путем увеличения
-// глобальной (!) переменной ClientId
-func CreateIdForClient(MsgChan chan string, ResultChan chan int) {
-	ClientId := 1
-	for {
-		msg := <- MsgChan
-
-		switch msg {
-
-		case "Get new id" :
-			ResultChan <- ClientId
-			ClientId += 1
-
-		case "Get max id" :
-			ResultChan <- ClientId
-		}
-	}
-}
-
-// TESTMESSENGER
-// запускет тесты сервера и клиента
-func TestMessenger(t *testing.T) {
-
-	CreateIdForClientChanMsg := make( chan string, 100 )
-	CreateIdForClientChanResult := make( chan int, 100 )
-	go CreateIdForClient( CreateIdForClientChanMsg, CreateIdForClientChanResult )
-
-	t.Run("runServer", func (t *testing.T) {
-		t.Parallel()
-		runServer( t )
-	})
-
-	t.Run("RunClients", func (t *testing.T) {
-		t.Parallel()
-
-		// for i := 0; i < 2; i++ {
-			t.Run("ClientTestsGroup", func (t *testing.T) {
-				t.Parallel()
-				ClientTestsGroup( t, CreateIdForClientChanMsg,
-					CreateIdForClientChanResult )
-			})
-
-				t.Run("ClientTestsGroup2", func (t *testing.T) {
-				t.Parallel()
-				ClientTestsGroup( t, CreateIdForClientChanMsg,
-					CreateIdForClientChanResult )
-
-			})
-		// }
-	})
+	// }
 }
