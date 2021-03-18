@@ -38,11 +38,11 @@ func CreateIdForClient(MsgChan chan string, ResultChan chan int) {
 // Если результатом чтения является ошибка EOF, то пробует считать еще раз -
 // скорее всего данные еще дошли в стрим.
 // Если и в этом случае ошибка != nil, то возвращает fail
-func CompareString(testName string, WaitedString string, stdout io.ReadCloser,
-	id int ) bool {
+func CompareString(testName string, WaitedString string, r *bufio.Reader, id int ) bool {
 
-	r := bufio.NewReader( stdout )
+	// fmt.Printf("%+v\n \n", r)
 	string, err := r.ReadString('\n')
+	// fmt.Printf("%+v\n \n", r)
 
 	if err == io.EOF {
 		string, err := r.ReadString('\n')
@@ -73,6 +73,7 @@ func CompareString(testName string, WaitedString string, stdout io.ReadCloser,
 // из нескольких строк
 func CheckMultiInputClient( stdout io.ReadCloser, stdin io.WriteCloser, id int ) bool {
 
+	r := bufio.NewReader( stdout )
 	w := bufio.NewWriter( stdin )
 	idString := strconv.Itoa(id)
 	recieveMsg := "Получено сообщение от пользователя " + idString + ":\n"
@@ -99,14 +100,14 @@ func CheckMultiInputClient( stdout io.ReadCloser, stdin io.WriteCloser, id int )
 	}
 
 	// Убеждаемся, что сообщение пришло от этого же клиента
-	retval := CompareString("checkMultiInputClient", recieveMsg, stdout , id )
+	retval := CompareString("checkMultiInputClient", recieveMsg, r , id )
 
 	if retval != true {
 		return false
 	}
 	// Проверяем, что все сообщение дошло в целости и сохранности
 	for i := 1; i < 4; i++ {
-		retval := CompareString("checkMultiInputClient", msg[i], stdout , id )
+		retval := CompareString("checkMultiInputClient", msg[i], r , id )
 		if retval != true {
 			return false
 		}
@@ -118,7 +119,7 @@ func CheckMultiInputClient( stdout io.ReadCloser, stdin io.WriteCloser, id int )
 // отправляет сообщение несуществующему клиенту
 func SendMessageToNonExistendClient( stdout io.ReadCloser, stdin io.WriteCloser,
 	id int) bool {
-	// r := bufio.NewReader( stdout )
+	r := bufio.NewReader( stdout )
 	w := bufio.NewWriter( stdin )
 	MyIdString := strconv.Itoa(id)
 	UserIdString := strconv.Itoa(MaxClients + 1)
@@ -137,7 +138,7 @@ func SendMessageToNonExistendClient( stdout io.ReadCloser, stdin io.WriteCloser,
 	}
 
 	// проверяем, что пришло в ответ от клиента
-	return CompareString("SendMessageToNonExistendClient", recieveMsg, stdout, id )
+	return CompareString("SendMessageToNonExistendClient", recieveMsg, r, id )
 }
 
 // CheckQuitClient
@@ -158,9 +159,10 @@ func CheckQuitClient( stdin io.WriteCloser, id int, cmd *exec.Cmd ) bool {
 // CheckClientConnectionToServer
 // проверяет, подключилсяли клиент к серверу
 func CheckClientConnectionToServer( stdout io.ReadCloser, id int ) bool {
+	r := bufio.NewReader( stdout )
 
 	msg := "Have a connection with server \n"
-	return CompareString("CheckClientConnectionToServer", msg, stdout , id )
+	return CompareString("CheckClientConnectionToServer", msg, r , id )
 }
 
 // TESTSERVER
@@ -267,6 +269,7 @@ func TestClientGroup() bool {
 
 
 func main () {
+
 	retval := TestServer()
 	retval2 := TestClientGroup()
 	if retval == false || retval2 == false {
