@@ -40,9 +40,7 @@ func CreateIdForClient(MsgChan chan string, ResultChan chan int) {
 // Если и в этом случае ошибка != nil, то возвращает fail
 func CompareString(testName string, WaitedString string, r *bufio.Reader, id int ) bool {
 
-	// fmt.Printf("%+v\n \n", r)
 	string, err := r.ReadString('\n')
-	// fmt.Printf("%+v\n \n", r)
 
 	if err == io.EOF {
 		string, err := r.ReadString('\n')
@@ -203,67 +201,67 @@ func TestClientGroup() bool {
 	ch2 := make( chan int, 100 )
 	go CreateIdForClient( ch1, ch2 )
 
-	// for i := 0; i < 2; i++ {
+	for i := 0; i < 2; i++ {
 
-	//получили id для клиента
-	ch1 <- "Get new id"
-	id := <- ch2
+		//получили id для клиента
+		ch1 <- "Get new id"
+		id := <- ch2
 
-	cmd := exec.Command("./client", strconv.Itoa(id))
-	stdout, err1 := cmd.StdoutPipe()
-	stdin, err2 := cmd.StdinPipe()
+		cmd := exec.Command("./client", strconv.Itoa(id))
+		stdout, err1 := cmd.StdoutPipe()
+		stdin, err2 := cmd.StdinPipe()
 
-	if err1 != nil {
-		fmt.Printf("runClient: не удалось привязать пайп к stdout \n")
-		return false
-	}
+		if err1 != nil {
+			fmt.Printf("runClient: не удалось привязать пайп к stdout \n")
+			return false
+		}
 
-	if err2 != nil {
-		fmt.Printf("runClient: не удалось привязать пайп к stdin \n")
-		return false
-	}
+		if err2 != nil {
+			fmt.Printf("runClient: не удалось привязать пайп к stdin \n")
+			return false
+		}
 
-	// запуск клиента
-	cmd.Start()
+		// запуск клиента
+		cmd.Start()
 
-	// проверить наличие соединения с сервером
-	retval := CheckClientConnectionToServer( stdout, id)
-	if retval == false {
-		fmt.Printf("CheckClientConnectionToServer FAILED \n")
-		return false
-
-	} else {
-		fmt.Printf("CheckClientConnectionToServer PASSED \n")
-
-		// проверить отправку пакета несуществующему клиенту
-		retval = SendMessageToNonExistendClient( stdout, stdin, id )
+		// проверить наличие соединения с сервером
+		retval := CheckClientConnectionToServer( stdout, id)
 		if retval == false {
-			fmt.Printf("SendMessageToNonExistendClient FAILED \n")
+			fmt.Printf("CheckClientConnectionToServer FAILED \n")
 			return false
 
 		} else {
-			fmt.Printf("SendMessageToNonExistendClient PASSED \n")
+			fmt.Printf("CheckClientConnectionToServer PASSED \n")
 
-			// проверить отправку пакета себе же (в сообщении несколько строк)
-			retval = CheckMultiInputClient( stdout, stdin, id )
-
+			// проверить отправку пакета несуществующему клиенту
+			retval = SendMessageToNonExistendClient( stdout, stdin, id )
 			if retval == false {
-				fmt.Printf("CheckMultiInputClient FAILED \n")
+				fmt.Printf("SendMessageToNonExistendClient FAILED \n")
 				return false
 
 			} else {
-				fmt.Printf("CheckMultiInputClient PASSED \n")
+				fmt.Printf("SendMessageToNonExistendClient PASSED \n")
 
-				// завершение клиента
-				retval = CheckQuitClient( stdin, id, cmd )
+				// проверить отправку пакета себе же (в сообщении несколько строк)
+				retval = CheckMultiInputClient( stdout, stdin, id )
+
 				if retval == false {
-					fmt.Printf("CheckQuitClient FAILED \n")
+					fmt.Printf("CheckMultiInputClient FAILED \n")
 					return false
+
+				} else {
+					fmt.Printf("CheckMultiInputClient PASSED \n")
+
+					// завершение клиента
+					// retval = CheckQuitClient( stdin, id, cmd )
+					// if retval == false {
+					// 	fmt.Printf("CheckQuitClient FAILED \n")
+					// 	return false
+					// }
 				}
 			}
 		}
 	}
-// }
 	return true
 }
 
