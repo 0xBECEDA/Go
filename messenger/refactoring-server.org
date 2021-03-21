@@ -151,7 +151,7 @@
 Поэтому создаем структуру, которая связывает все сведения о клиенте
 воедино.
 
-#+NAME: _servConnection
+#+NAME: _Connection
 #+BEGIN_SRC go :noweb yes
   type connection struct {
       Status string
@@ -271,8 +271,8 @@
 - пакет пришел (да/нет)
 - клиент зарегистрирован (да/нет)
 
-#+NAME: _servGetMessage
-#+BEGIN_SRC go :noweb yes :tangle server.go
+#+NAME: _GetMessage
+#+BEGIN_SRC go :noweb yes
   <<_serialization>>
 
   func GetMessage( connect *net.TCPConn, ch chan connection, ch2 chan bool,
@@ -347,7 +347,7 @@
 
 [TODO:gmm] убрать запрос напрямую к глобальной таблице соединений
 [TODO:gmm] ввести константы для статусов отправки
-#+NAME: _servSendMessage
+#+NAME: _SendMessage
 #+BEGIN_SRC go :noweb yes
   <<_servCheckErrorSendMessage>>
 
@@ -509,3 +509,141 @@
   }
 
 #+END_SRC
+
+* Новая идея для сервера
+
+У каждого соединения есть очередь: в нее будут записаны все пакеты,
+которые должны быть отправлены этому клиенту. Эта очередь будет
+представлять из себя канал, из которого поток ~SendMessege~, созданный
+специально для этого клиента, будет читать пакеты и отправлять их.
+Поэтому каждая структура клиента на сервере будет включать в себя еще и
+канал, по которому с ним можно связаться.
+
+Получим пакет, любой поток ~GetMessage~ будет десериализовывать его,
+получать из таблицы соединений очередь клиента, записывать в него пакет,
+и на этом все.
+
+А поток ~SendMessege~ будет постоянно читать из очереди своего
+клиента. Если в ней ничего нет, он будет формировать на своей стороне
+пустой пакет-пинг и отправлять его.
+
+Поэтому добавляем в ~connection~ поле очереди:
+
+#+NAME: _servConnection
+#+BEGIN_SRC go :noweb yes
+  type connection struct {
+      Status string
+      ClientID int
+      SendQueue chan sendPackage
+      Connect *net.TCPConn
+  }
+
+  <<_servConsts>>
+#+END_SRC
+
+Изменяем ~GetMessege~:
+#+NAME: _servGetMessage
+#+BEGIN_SRC go :noweb yes :tangle server.go
+  <<_serialization>>
+
+  func GetMessage( connect *net.TCPConn, ch chan connection, ch2 chan bool,
+      ch3 chan sendPackage ) {
+
+      RegistrState := "no"
+      buf := make([]byte, packSize)
+
+      for {
+          len, err := connect.Read( buf )
+
+          // пакет получен
+          if err ==  nil {
+              fmt.Printf("--GetMessage--: message recieved, len %d bytes \n", len );
+              pack, err := deserialization( buf[:len] )
+
+              if err == nil {
+                  // клиент еще не был зарегистрирован
+                  if RegistrState == "no" {
+                      newConnection:= connection{ Status: "new", ClientID: pack.MyID,
+                          SendQueue: ch3, Connect:  connect }
+                      ch <- newConnection
+
+                      // регистрация закончена?
+                      finished :=  <- ch2
+                      if finished == true {
+                          RegistrState = "yes"
+                      }
+                  }
+
+                  client, found := ConnectionsTable[pack.UserID]
+                  if found == true {
+                      client.SendQueue <- pack
+
+                  } else {
+                      pack.SendStatus = -1
+                      ch3 <- pack
+                  }
+              }
+          }
+      }
+  }
+
+  <<_servSendMessage>>
+#+END_SRC
+
+Теперь ~SendMessage~ просто читает из очереди пакеты. Если очередь
+пустая, то отправляется пакет-пинг.
+
+#+NAME: _servSendMessage
+#+BEGIN_SRC go :noweb yes
+  <<_servCheckErrorSendMessage>>
+
+  func SendMessage( MyConnect *net.TCPConn, ch1 chan connection, ch2 chan sendPackage) {
+
+      for {
+          select {
+          case pack := <- ch2:
+
+              status := pack.SendStatus
+              // проверяем статус отправки
+              switch status {
+                  // клиент сообщил о выходе
+              case -5:
+                  DeadConnect := connection{ Status: "dead", ClientID: pack.MyID }
+                  ch1 <- DeadConnect
+                  return
+
+              default:
+                  sendBuf, err := serialization( &pack )
+                  len, err := MyConnect.Write( sendBuf )
+                  CheckErrorSendMessage( err, len)
+              }
+
+          default:
+              time.Sleep(4 * time.Second)
+              pack := sendPackage{ SendStatus: 1 }
+              sendBuf, err := serialization( &pack )
+
+              if err == nil {
+                  len, err := MyConnect.Write( sendBuf )
+                  CheckErrorSendMessage( err, len)
+              }
+          }
+      }
+  }
+
+  <<_servMain>>
+#+END_SRC
+
+[TODO:gmm] Реализовать следующий функционал:
+
+- хранить базу с переписками всех пользователей друг с другом
+- у каждого соединения есть очереди сообщений. Создать функционал,
+  который будет обходить очереди и если в них больше определенного кол-ва
+  пакетов, то выгружать пакеты из очереди (куда?)
+- реализовать функционал, который откладывает посылку сообщения клиенту,
+  если он не в сети (но надо ли это? все мессенджеры спокойно отправляют
+  сообщения неактивным клиентам, а те как прочитают, так прочитают)
+
+* База данных сообщений
+
+Надо хранить всю переписку пользователей. В этом поможет постгресс.
