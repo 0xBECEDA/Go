@@ -1,0 +1,139 @@
+Шпаргалка по постгресс.
+
+** Задача 1
+
+Кто летел позавчера рейсом Москва (SVO) — Ново-сибирск (OVB) на месте 1A,
+и когда он забронировал свой билет?
+
+Решение из учебника:
+
+#+BEGIN_SRC sql :noweb yes
+  SELECT t.passenger_name, b.book_date FROM  bookings b
+  JOIN tickets t
+  ON t.book_ref = b.book_ref
+  JOIN boarding_passes bp
+  ON bp.ticket_no = t.ticket_no
+  JOIN flights f
+  ON f.flight_id = bp.flight_id
+  WHERE  f.departure_airport ='SVO'
+  AND f.arrival_airport ='OVB'
+  AND f.scheduled_departure::date =bookings.now()::date - INTERVAL'2 day'
+  AND bp.seat_no ='1A';
+#+END_SRC
+
+Мой аналог:
+
+#+BEGIN_SRC sql :noweb yes
+  SELECT t.passenger_name, b.book_date
+  FROM  bookings b, tickets t, boarding_passes bp, flights f
+  WHERE t.book_ref = b.book_ref
+  AND bp.ticket_no = t.ticket_no
+  AND f.flight_id = bp.flight_id
+  AND f.departure_airport ='SVO'
+  AND f.arrival_airport ='OVB'
+  AND f.scheduled_departure::date =bookings.now()::date - INTERVAL'2 day'
+  AND bp.seat_no ='1A';
+#+END_SRC
+
+** Задача 2
+
+Сколько мест осталось незанятыми вчера на рейсе PG0404?
+
+Попытка самостоятельного решения.
+Есть несколько баз:
+- airports
+- aircrafts
+- flights
+- seats
+- ticket_flights
+- tickets
+- bookings
+- boarding_passes
+
+В базе ~flights~ содержится поле ~flight_no~ - номер рейса. И содержится
+поле ~scheduled_departure~, которое содердит дату отправления.
+
+Этот запрос показывает, какой именно рейс с номером 'PG0404' отправился
+вчера.
+
+#+BEGIN_SRC sql :noweb yes
+  SELECT * FROM flights
+  WHERE flight_no = 'PG0404'
+  AND scheduled_departure::date =bookings.now()::date - INTERVAL'1 day';
+#+END_SRC
+
+Теперь надо выяснить, сколько билетов на него было продано.
+Есть инфа, на какие места есть посадочные талоны.
+Следовательно, надо найти все места для этого рейса, на которые
+посадочные талоны выданы не были. Связать посадочные талоны и рейсы можно
+через поля ~flight_id~, которые есть и в базе ~flights~, и в базе
+~boarding_passes~.
+
+Пробуем вывести все бронирования на этот рейс:
+#+BEGIN_SRC sql :noweb yes
+  SELECT * FROM boarding_passes bp
+  WHERE bp.flight_id =  ( SELECT f.flight_id FROM flights f
+                          WHERE f.flight_no = 'PG0404'
+                          AND scheduled_departure::date =bookings.now()::date - INTERVAL'1 day' ) ;
+#+END_SRC
+
+Так же есть база ~seats~, где вообще все места для всех самолетов. У нее
+есть поле ~aircraft_code~, которое есть и у базы ~flights~, таким образом
+можно выяснить, какие места есть на этом рейсе.
+
+Пробуем вывести все места для этого рейса:
+
+#+BEGIN_SRC sql :noweb yes
+  SELECT seats_no FROM boarding_passes bp, seats s, flights f
+  WHERE bp.flight_id =  f.flight_id
+  AND f.flight_no = 'PG0404'
+  AND f.aircraft_code = s.aircraft_code
+  AND scheduled_departure::date =bookings.now()::date - INTERVAL'1 day';
+#+END_SRC
+
+Теперь мы умеем выводить все бронирования на рейс и все места на рейс.
+Так что теперь надо просто сопоставить номера мест из бронирования с
+номерами всех мест и выбрать те, для которых бронирования нет.
+
+#+BEGIN_SRC sql :noweb yes
+  SELECT count(*) FROM flights f, seats s
+  WHERE f.aircraft_code = s.aircraft_code
+  AND f.flight_no ='PG0404'
+  AND scheduled_departure::date =bookings.now()::date - INTERVAL'1 day'
+  AND NOT EXISTS (SELECT NULL FROM boarding_passes bp
+                 WHERE bp.flight_id = f.flight_id
+                 AND s.seat_no = bp.seat_no );
+#+END_SRC
+
+** Задача 3
+
+На каких маршрутах произошли самые длительные задержки рейсов? Выведите
+список из десяти «лидирующих» рейсов.
+
+Задержки рейсов можно отследить благодаря полям ~scheduled_departure_local~
+~actual_departure_local~ в базе ~flights_v~.
+
+Пробуем вывести первые 5 задержанных ресов:
+
+#+BEGIN_SRC sql :noweb yes
+  SELECT f.scheduled_departure_local, f.actual_departure_local FROM flights_v f
+  WHERE f.scheduled_departure_local < f.actual_departure_local
+  LIMIT 5;
+#+END_SRC
+
+В базе routes, которая содержит в себе маршруты, нет данных о прибытии
+или отправлениях рейса. Но записи из нее можно сопоставить с записями из
+~flignts_v~ с помощью поля ~flight_no~ - номер рейса.
+
+#+BEGIN_SRC sql :noweb yes
+    SELECT
+    f.flight_no,
+    f.flight_id,
+    f.scheduled_departure,
+    f.actual_departure,
+    f.actual_departure - f.scheduled_departure AS delay
+    FROM flights_v f
+    WHERE f.actual_departure IS NOT NULL
+    ORDER BY f.actual_departure - f.scheduled_departure DESC
+    LIMIT 10;
+#+END_SRC
