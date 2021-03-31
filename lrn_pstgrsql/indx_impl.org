@@ -54,17 +54,71 @@ m. Тогда свойства:
 
 ** Структура узла
 Сначала реализуем структуру узла: у него будет максимум 3 ключа и
-максимум 4 потомка.
+максимум 4 потомка и 1 родитель.
 
 #+NAME: _node
 #+BEGIN_SRC lisp :noweb yes
-  (defstruct (node)
+  <<_print_node>>
+  (defstruct (node (:print-function (lambda (n s d)
+                                      (print-tree s n d))))
     elt1 elt2 elt3
     (parent nil)
     (child1 nil)
     (child2 nil)
     (child3 nil)
     (child4 nil))
+
+#+END_SRC
+
+Теперь реалищуем функцию печати. Она будет перчатать значения узла и
+рекурсивно обходить его потомков. При этом поле "parent" - т.е. родитель
+узла - не будет обходиться рекурсивно иначе рекурсия будет
+бесконечной. Вместо этого, находясь в дочерней ноде, мы будем выводить
+только значения узла родителя.
+
+#+NAME: _print_node
+#+BEGIN_SRC lisp :noweb yes
+  (defun print-space (n)
+    (if (= n 0)
+        t
+        (progn
+          (format t " ")
+          (print-space (decf n)))))
+
+  (defun print-node-values (stream string node)
+    (if (null node)
+        (format stream "NIL ~%")
+        (format stream "#~A <~A ~A ~A> ~%"
+                string
+                (node-elt1 node)
+                (node-elt2 node)
+                (node-elt3 node))))
+
+  (defun print-child (stream string child level)
+    (print-space  (expt level 2))
+    (format stream "~A " string)
+    (print-tree-rec stream child level))
+
+  (defun print-parent-values (stream parent level)
+    (print-space (expt level 2))
+    (format stream ":PARENT ")
+    (print-node-values stream "" parent))
+
+  (defun print-tree-rec (stream tree level)
+    (if (null tree)
+        (print-node-values stream "" tree)
+        (progn
+          (print-node-values stream "NODE" tree)
+          (print-parent-values stream (node-parent tree) (+ 1 level))
+          (print-child stream ":CHILD1" (node-child1 tree) (+ 1 level))
+          (print-child stream ":CHILD2" (node-child2 tree) (+ 1 level))
+          (print-child stream ":CHILD3" (node-child3 tree) (+ 1 level))
+          (print-child stream ":CHILD4" (node-child4 tree) (+ 1 level))
+          (format stream "~%" ))))
+
+  (defun print-tree (stream tree d)
+    (format stream "~%" )
+    (print-tree-rec stream tree d))
 #+END_SRC
 
 ** Вставка элемента
@@ -318,31 +372,119 @@ m. Тогда свойства:
           (t nil)))
 #+END_SRC
 
-Эта функция присоединяет потомка к ноде в случае, если какой-то из
-потомков на занят - это нужно, чтоб присоединить "разделенный" лист к
-родительскому узлу (две ветви, образовывшиеся от листа, станут потомкам
-родителя)
+Нужно присоединить "разделенный" лист к родительскому узлу (две ветви,
+образовывшиеся от листа, станут потомкам родителя)
 
-#+NAME: _insert_key_into_node
+При этом может возникнуть два сценария:
+- у родителя есть незанятый потомок, в этом случае надо просто найти его
+  поле в структуре ноды и связать его с новым потомком
+
+- у родителя все потомки заняты
+Вспоминаем, что у нас деерво 4го порядка - т.е. у узла может быть
+максимум 3 значения и 4 потомка.
+
+Согласно одному из свойств дерева, у узла с n-1 здолжно быть
+n потомков. Т.е. когда в родителе 2 элемента, у него должно быть 3
+потомка. Одного из этих потомков мы поделили на два узла и его медианный
+элемент хотим вставить в родителя. И в родителе даже есть для него
+место - третье значение свободно. Но вот незадача: у нас уже занято 3
+потомка из 4х возможных, а у нас еще два потомка, которые надо
+присоединить к узлу. А узел в дереве 4го порядка не может иметь 5
+потомков.
+
+Что делать? В этом случае нужно понять, какой именно из потомков родителя
+был разделен и заменить этот потомок на нового потомка. Сделать это
+просто: у старого и нового потомков будет повторяться хотя бы одно
+значение. Поскольку в нашем дереве значения не повторяются, то можно быть
+уверенным, что это если хотя бы 1 значение совпадет в двух узлах, то это
+однозначено целый узел и его "половинка" кроме случаев, когда
+присоединяемый потомок nil или совпавший элемент nil.
+
+Напишем такую процедуру:
+#+NAME: _append_child_to_node
 #+BEGIN_SRC lisp :noweb yes
+  ;; эта функция собирает все значения узла в список
+  (defun collect-values-from-node (node)
+    (if (null node)
+        '(nil)
+        (list (node-elt1 node) (node-elt2 node) (node-elt3 node))))
+
+
+  ;; эта функция проверяет, не состояит ли полученный от
+  ;; пересечения список только из элементов nil
+  (defun nil-intersection? (lst)
+    (defun nil-intersection-rec (lst n)
+      (if (null lst)
+          n
+          (if (null (car lst))
+              (nil-intersection-rec (cdr lst) (incf n))
+              (nil-intersection-rec (cdr lst) n))))
+    (= (length lst) (nil-intersection-rec lst 0)))
+
+
+  ;; (nil-intersection? '(nil nil nil))
+  ;; (nil-intersection? '(nil 1 nil))
+
+  ;; предикат для определния наличия пересечения между двумя
+  ;; списками при условии, что пересечение - это не элементы nil
+  (defun intersection? (lst1 lst2)
+    (let ((inttersect (intersection lst1 lst2)))
+      (not (nil-intersection? inttersect))))
+
   (defun append-child-to-node (node child)
-    (cond ((null (node-child1 node))
-           (progn
-             (setf (node-child1 node) child)
-             t))
+    (cond ((null child)
+           nil)
+          ((null (node-child1 node))
+           (setf (node-child1 node) child))
           ((null (node-child2 node))
-           (progn
-             (setf (node-child2 node) child)
-             t))
+           (setf (node-child2 node) child))
           ((null (node-child3 node))
-           (progn
-             (setf (node-child3 node) child)
-             t))
+           (setf (node-child3 node) child))
           ((null (node-child4 node))
-           (progn
-             (setf (node-child4 node) child)
-             t))
-          (t nil)))
+           (setf (node-child4 node) child))
+          (t (let ((child1-elts (collect-values-from-node (node-child1 node)))
+                   (child2-elts (collect-values-from-node (node-child2 node)))
+                   (child3-elts (collect-values-from-node (node-child3 node)))
+                   (child4-elts (collect-values-from-node (node-child4 node)))
+                   (new-child-elts (collect-values-from-node child)))
+               (cond ((intersection? new-child-elts child1-elts)
+                      (setf (node-child1 node) child))
+                     ((intersection? new-child-elts child2-elts)
+                      (setf (node-child2 node) child))
+                     ((intersection? new-child-elts child3-elts)
+                      (setf (node-child3 node) child))
+                     ((intersection? new-child-elts child4-elts)
+                        (setf (node-child4 node) child))
+                     (t nil))))))
+
+
+  ;; (setf test (make-node :elt1 -4
+  ;;                       :elt2 0))
+
+  ;; (setf test2 (make-node :elt1 2))
+
+  ;; (setf test3 (make-node :elt1 5
+  ;;                        :elt2 6
+  ;;                        :elt3 12))
+
+  ;; (setf test4 (make-node :elt1 20
+  ;;                        :elt2 32
+  ;;                        :elt3 36))
+
+  ;; (setf test5 (make-node :elt1 20))
+  ;; (setf test6 (make-node :elt1 48))
+
+  ;; (setf tree (make-node :elt1 1
+  ;;                       :elt2 3
+  ;;                       :elt3 18
+  ;;                       :child1 test
+  ;;                       :child2 test2
+  ;;                       :child3 test3
+  ;;                       :child4 test4))
+
+  ;; (append-child-to-node tree test5)
+  ;; (append-child-to-node tree test6)
+  ;; (append-child-to-node tree nil)
 #+END_SRC
 
 Теперь пишем процедуру, которая разделит узел на два и вернет 2
@@ -376,6 +518,7 @@ m. Тогда свойства:
   ;;                        :elt2 32
   ;;                        :elt3 36))
 
+
   ;; (setf tree (make-node :elt1 1
   ;;                       :elt2 3
   ;;                       :elt3 18
@@ -383,6 +526,7 @@ m. Тогда свойства:
   ;;                       :child2 test2
   ;;                       :child3 test3
   ;;                       :child4 test4))
+
   ;; (split tree)
 
   ;; (setf tree (make-node :elt1 1
@@ -438,6 +582,7 @@ m. Тогда свойства:
     - переходим на уровеь вложенности родителя
     - рекурсивно вызываем функцию
 
+
 Пишем процедуру, которая проверя дошли ли мы до листа - у листа нет потомков:
 #+NAME: _leaf
 #+BEGIN_SRC lisp :noweb yes
@@ -464,34 +609,171 @@ m. Тогда свойства:
 #+END_SRC
 
 
+Пишем процедуру, которая перекомбинирует дерево согласно алгоритму,
+описанному выше.
+
 #+NAME: _recombine_tree
 #+BEGIN_SRC lisp :noweb yes
+  (defun recombine-tree (key tree sub-tree1 sub-tree2)
+    (format t " ~% recombine-tree tree ~A" tree)
+    (format t " ~% -------------")
+    (if (null key)
+        (if (null (node-parent tree))
+            tree
+            (recombine-tree key (node-parent tree) sub-tree1 sub-tree2))
+        (if (not (full? tree))
+            (progn
+              (insert-key-into-node tree key)
+              (append-child-to-node tree sub-tree1)
+              (append-child-to-node tree sub-tree2)
+              (recombine-node tree)
+              (if (null (node-parent tree))
+                  tree
+                  (recombine-tree nil (node-parent tree) nil nil)))
+            (let ((median (node-elt2 tree)))
+              (multiple-value-bind (sub-node-left sub-node-right)
+                  (split tree)
+                (if (< key median)
+                    (progn
+                      (insert-key-into-node sub-node-left key)
+                      (append-child-to-node sub-node-left sub-tree1)
+                      (append-child-to-node sub-node-left sub-tree2)
+                      (recombine-node sub-node-left)
+                      (if (null (node-parent tree))
+                          (let ((new-root (make-node :elt1 median)))
+                            (setf (node-parent sub-node-left) new-root)
+                            (setf (node-parent sub-node-right) new-root)
+                            (setf (node-child1 new-root) sub-node-left)
+                            (setf (node-child1 new-root) sub-node-right))
+                          (recombine-tree median (node-parent tree)
+                                          sub-node-left sub-node-right)))
+                    (progn
+                      (insert-key-into-node sub-node-right key)
+                      (append-child-to-node sub-node-right sub-tree1)
+                      (append-child-to-node sub-node-right sub-tree2)
+                      (recombine-node sub-node-right)
+                      (if (null (node-parent tree))
+                          (let ((new-root (make-node :elt1 median)))
+                            (setf (node-parent sub-node-left) new-root)
+                            (setf (node-parent sub-node-right) new-root)
+                            (setf (node-child1 new-root) sub-node-left)
+                            (setf (node-child1 new-root) sub-node-right))
+                          (recombine-tree median (node-parent tree)
+                                          sub-node-left sub-node-right)))))))))
 
+
+  ;; (defun recombine-tree (key tree sub-tree1 sub-tree2)
+  ;;   (format t " ~% recombine-tree tree ~A" tree)
+  ;;   (format t " ~% -------------")
+  ;;   (if (not (full? tree))
+  ;;       (progn
+  ;;         (insert-key-into-node tree key)
+  ;;         (append-child-to-node tree sub-tree1)
+  ;;         (append-child-to-node tree sub-tree2)
+  ;;         (recombine-node tree))
+  ;;       (let ((median (node-elt2 tree)))
+  ;;         (multiple-value-bind (sub-node-left sub-node-right)
+  ;;             (split tree)
+  ;;           (if (< key median)
+  ;;               (progn
+  ;;                 (insert-key-into-node sub-node-left key)
+  ;;                 (append-child-to-node sub-node-left sub-tree1)
+  ;;                 (append-child-to-node sub-node-left sub-tree2)
+  ;;                 (recombine-node sub-node-left)
+  ;;                 (if (null (node-parent tree))
+  ;;                     (let ((new-root (make-node :elt1 median
+  ;;                                                :child1 sub-node-left
+  ;;                                                :child2 sub-node-right)))
+  ;;                       (setf (node-parent sub-node-left) new-root)
+  ;;                       (setf (node-parent sub-node-right) new-root))
+  ;;                     (recombine-tree median (node-parent tree)
+  ;;                                     sub-node-left sub-node-right)))
+  ;;               (progn
+  ;;                 (insert-key-into-node sub-node-right key)
+  ;;                 (append-child-to-node sub-node-right sub-tree1)
+  ;;                 (append-child-to-node sub-node-right sub-tree2)
+  ;;                 (recombine-node sub-node-right)
+  ;;                 (if (null (node-parent tree))
+  ;;                     (let ((new-root (make-node :elt1 median)))
+  ;;                       (setf (node-parent sub-node-left) new-root)
+  ;;                       (setf (node-parent sub-node-right) new-root)
+  ;;                       (setf (node-child1 new-root) sub-node-left)
+  ;;                       (setf (node-child1 new-root) sub-node-right))
+  ;;                     (recombine-tree median (node-parent tree)
+  ;;                                     sub-node-left sub-node-right))))))))
 #+END_SRC
 
 #+NAME: _make_b_tree
 #+BEGIN_SRC lisp :noweb yes
   (defun insert-b-tree( key tree )
-    (cond ((null tree) (make-node :elt1 key))
-          ((leaf? tree)
-           (cond ((equal-key? tree key) tree)
-                 ((null (node-elt2 tree)) (setf (node-elt2 tree) key))
-                 ((null (node-elt3 tree)) (setf (node-elt3 tree) key))
+    (if (null tree)
+        (setf tree (make-node :elt1 key))
+        (let ((elt1 (node-elt1 tree))
+              (elt2 (node-elt2 tree))
+              (elt3 (node-elt3 tree)))
+          (if (leaf? tree)
+              (progn
+                (format t "~% leaf ~A" tree)
+                (recombine-tree key tree nil nil))
+              (cond ((equal-key? tree key) tree)
+                    ((< key elt1) (insert-b-tree key (node-child1 tree)))
+                    ((and (> key elt1)
+                          (or (and (not (null elt2))
+                                   (< key elt2))
+                              (not (null elt2))))
+                     (insert-b-tree key (node-child2 tree)))
+                    ((and (and (not (null elt2))
+                               (> key elt2))
+                          (or (and (not (null elt3))
+                                   (< key elt3))
+                              (not (null elt3))))
+                     (insert-b-tree key (node-child3 tree)))
+                    (t (insert-b-tree key (node-child4 tree))))))))
 
-                 (t ))
+  (defun build-b-tree (lst)
+    (defun build-b-tree-rec (lst tree)
+      (if (null lst)
+          tree
+          (progn
+            (format t "~% ~A" tree)
+            (format t "~% --------------")
+            (build-b-tree-rec (cdr lst) (insert-b-tree (car lst) tree)))))
+    (build-b-tree-rec lst nil))
 
 
+  ;; (setf tree (build-b-tree '(0 5 9 13 4 -6 17 32 8)))
 
-           (t (cond ((equal-key? tree key) tree)
-                    (((node-elt1 tree) > key) (insert-b-node key (node-child1 tree)))
-                    ((and ((node-elt1 tree) < key)
-                          (and (not (null (node-elt2 tree)))
-                               (node-elt2 tree) > key))
-                     (insert-b-node key (node-child2 tree)))
-                    ((and (and (not (null (node-elt2 tree)))
-                               (node-elt2 tree) < key)
-                          (and (not (null (node-elt3 tree)))
-                               (node-elt3 tree) > key))
-                     (insert-b-node key (node-child3 tree)))
-                    (t (insert-b-node key ( node-child4 tree))))))))
+
+  (setf tree (insert-b-tree 0 nil))
+  (setf tree (insert-b-tree 5 tree))
+  (setf tree (insert-b-tree 9 tree))
+  (setf tree (insert-b-tree 13 tree))
+  ;; (setf tree (insert-b-tree 4 tree))
+#+END_SRC
+
+#+NAME: _tangle
+#+BEGIN_SRC lisp :tangle b-tree.lisp :noweb yes
+  <<_node>>
+
+  <<_full?>>
+
+  <<_check_order>>
+
+  <<_leaf>>
+
+  <<_equal_key>>
+
+  <<_get_any_child_elt>>
+
+  <<_sort_elts_in_node>>
+
+  <<_insert_key_into_node>>
+
+  <<_append_child_to_node>>
+
+  <<_split>>
+
+  <<_recombine_tree>>
+
+  <<_make_b_tree>>
 #+END_SRC
