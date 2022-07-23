@@ -1,0 +1,3 @@
+port: 8080
+max_conn: 24
+timeout: 15
