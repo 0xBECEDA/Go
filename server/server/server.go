@@ -19,9 +19,10 @@ type Server struct {
 	logger       *zap.Logger
 }
 
-func New(cfg Config, logger *zap.Logger) *Server {
+func New(cfg Config, logger *zap.Logger, handler *handlers.RouteHandler) *Server {
 	s := &Server{
-		config: cfg,
+		config:       cfg,
+		routeHandler: handler,
 		server: &fasthttp.Server{
 			TCPKeepalivePeriod: cfg.TCPAlivePeriod,
 			MaxRequestsPerConn: cfg.MaxConn,
