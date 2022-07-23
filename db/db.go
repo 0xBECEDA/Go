@@ -14,7 +14,7 @@ type DB struct {
 }
 
 func Connect(cfg Config, logger *zap.Logger) (*DB, error) {
-	dsn := "host=" + cfg.Host + "user=" + cfg.User + "password=" + cfg.Password + "dbname=" + cfg.DBName + "port=" + fmt.Sprintf("%v", cfg.Port) + "sslmode=" + cfg.SSLMode
+	dsn := "host=" + cfg.Host + " user=" + cfg.DBUser + " password=" + cfg.Password + " dbname=" + cfg.DBName + " port=" + fmt.Sprintf("%v", cfg.Port) + " sslmode=" + cfg.SSLMode
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return &DB{}, err

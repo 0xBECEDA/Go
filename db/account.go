@@ -57,7 +57,7 @@ func (d *DB) FindAccountByID(id int, acc *Account) {
 	d.Conn.Find(acc).Where("id = ?", id)
 }
 
-func (d *DB) UpdateHost(id int, host string) {
+func (d *DB) UpdateAccountHost(id int, host string) {
 	d.Conn.Model(&Account{}).Where("id = ?", id).Update("host", host)
 }
 

@@ -1,0 +1,6 @@
+host: localhost
+port: 5432
+db_user: postgres
+password: postgres
+db_name: messanger
+ssl_mode: disable
