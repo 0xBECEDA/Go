@@ -1,4 +1,2 @@
 address: localhost:8080
-tcp_alive_period: 10
 max_conn: 24
-timeout: 15

@@ -1,4 +1,4 @@
-package handlers
+package route
 
 import (
 	"encoding/json"
@@ -26,22 +26,22 @@ type MessageTo struct {
 	Data   []byte
 }
 
-type RouteHandler struct {
+type Handler struct {
 	logger *zap.Logger
 	dbConn *db.DB
 	client *fasthttp.Client
 	// TODO добавить коннект к реббиту
 }
 
-func New(logger *zap.Logger, db *db.DB) *RouteHandler {
-	return &RouteHandler{
+func New(logger *zap.Logger, db *db.DB) *Handler {
+	return &Handler{
 		logger: logger,
 		dbConn: db,
 		client: &fasthttp.Client{},
 	}
 }
 
-func (h *RouteHandler) Send(reqCtx *fasthttp.RequestCtx) {
+func (h *Handler) Send(reqCtx *fasthttp.RequestCtx) {
 	var (
 		msg     *MessageFrom
 		accFrom *db.Account
@@ -57,8 +57,12 @@ func (h *RouteHandler) Send(reqCtx *fasthttp.RequestCtx) {
 		return
 	}
 
-	h.dbConn.FindAccountByID(msg.FromID, accFrom)
-	if accFrom.ID <= 0 {
+	if err := h.dbConn.FindAccountByID(msg.FromID, accFrom); err != nil {
+		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
+		_, _ = reqCtx.Write([]byte(err.Error()))
+	}
+
+	if accFrom == nil {
 		reqCtx.SetStatusCode(fasthttp.StatusBadRequest)
 		_, _ = reqCtx.Write([]byte(ErrNoSuchUser.Error()))
 		return
@@ -70,8 +74,12 @@ func (h *RouteHandler) Send(reqCtx *fasthttp.RequestCtx) {
 		return
 	}
 
-	h.dbConn.FindAccountByID(msg.ToID, accTo)
-	if accTo.ID <= 0 {
+	if err := h.dbConn.FindAccountByID(msg.ToID, accTo); err != nil {
+		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
+		_, _ = reqCtx.Write([]byte(err.Error()))
+	}
+
+	if accTo == nil {
 		reqCtx.SetStatusCode(fasthttp.StatusNoContent)
 		_, _ = reqCtx.Write([]byte(ErrFriendNotFound.Error()))
 		return

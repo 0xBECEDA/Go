@@ -4,7 +4,8 @@ import (
 	"context"
 	"messanger/config"
 	"messanger/db"
-	"messanger/server/handlers"
+	"messanger/server/handlers/register"
+	"messanger/server/handlers/route"
 	"messanger/server/server"
 	"time"
 
@@ -26,12 +27,14 @@ func main() {
 	}
 
 	var serverCfg server.Config
-	if err := config.Load("../config.yml", &serverCfg); err != nil {
+	if err := config.Load("./server/config.yml", &serverCfg); err != nil {
 		l.Fatal("error loading db config", zapcore.Field{String: err.Error()})
 	}
 
-	handler := handlers.New(l, dbConn)
-	serv := server.New(serverCfg, l, handler)
+	routeHandler := route.New(l, dbConn)
+	regHandler := register.New(l, dbConn)
+
+	serv := server.New(serverCfg, l, routeHandler, regHandler)
 	serv.Start()
 	defer serv.Stop(5 * time.Second)
 

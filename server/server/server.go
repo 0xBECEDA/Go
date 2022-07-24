@@ -2,7 +2,8 @@ package server
 
 import (
 	"context"
-	"messanger/server/handlers"
+	"messanger/server/handlers/register"
+	"messanger/server/handlers/route"
 	"runtime"
 	"strconv"
 	"time"
@@ -15,16 +16,18 @@ import (
 type Server struct {
 	config       Config
 	server       *fasthttp.Server
-	routeHandler *handlers.RouteHandler
+	routeHandler *route.Handler
+	regHandler   *register.Handler
 	logger       *zap.Logger
 }
 
-func New(cfg Config, logger *zap.Logger, handler *handlers.RouteHandler) *Server {
+func New(cfg Config, logger *zap.Logger, handler *route.Handler, handler2 *register.Handler) *Server {
 	s := &Server{
 		config:       cfg,
 		routeHandler: handler,
+		regHandler:   handler2,
 		server: &fasthttp.Server{
-			TCPKeepalivePeriod: cfg.TCPAlivePeriod,
+			TCPKeepalivePeriod: 20 * time.Second,
 			MaxRequestsPerConn: cfg.MaxConn,
 		},
 		logger: logger,
@@ -37,6 +40,8 @@ func New(cfg Config, logger *zap.Logger, handler *handlers.RouteHandler) *Server
 	})
 
 	r.POST("/send", s.routeHandler.Send)
+	r.POST("/reg", s.regHandler.RegisterNewUser)
+
 	s.server.Handler = r.Handler
 	return s
 }

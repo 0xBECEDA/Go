@@ -24,43 +24,46 @@ var (
 )
 
 func (d *DB) CreateAccount(name, email string) error {
-	var acc *Account
-	d.FindAccountByEmail(email, acc)
+	var acc Account
+	if err := d.FindAccountByEmail(email, &acc); err != nil {
+		return err
+	}
 	if acc.ID > 0 {
 		return ErrEmailIsAlreadyUsed
 	}
 
-	d.FindAccountByUserName(name, acc)
+	if err := d.FindAccountByUserName(name, &acc); err != nil {
+		return err
+	}
+
 	if acc.ID > 0 {
 		return ErrAccountAlreadyExist
 	}
 
-	d.Conn.Create(Account{
-		UserName:     name,
-		UserEmail:    email,
-		LastActiveAt: time.Now().UTC(),
-		CreatedAt:    time.Now().UTC(),
-		Banned:       false,
-	})
-	return nil
+	acc.UserName = name
+	acc.UserEmail = email
+	acc.CreatedAt = time.Now().UTC()
+	acc.LastActiveAt = time.Now().UTC()
+
+	return d.Conn.Create(&acc).Error
 }
 
-func (d *DB) FindAccountByUserName(userName string, acc *Account) {
-	d.Conn.Find(acc).Where("user_name = ?", userName)
+func (d *DB) FindAccountByUserName(userName string, acc *Account) error {
+	return d.Conn.Debug().Find(acc, "user_name = ?", userName).Error
 }
 
-func (d *DB) FindAccountByEmail(email string, acc *Account) {
-	d.Conn.Find(acc).Where("email = ?", email)
+func (d *DB) FindAccountByEmail(email string, acc *Account) error {
+	return d.Conn.Debug().Find(acc, "user_email = ?", email).Error
 }
 
-func (d *DB) FindAccountByID(id int, acc *Account) {
-	d.Conn.Find(acc).Where("id = ?", id)
+func (d *DB) FindAccountByID(id int, acc *Account) error {
+	return d.Conn.Debug().Find(acc, "id = ?", id).Error
 }
 
-func (d *DB) UpdateAccountHost(id int, host string) {
-	d.Conn.Model(&Account{}).Where("id = ?", id).Update("host", host)
+func (d *DB) UpdateAccountHost(id int, host string) error {
+	return d.Conn.Model(&Account{}).Where("id = ?", id).Update("host", host).Error
 }
 
-func (d *DB) BanAccount(id int64) {
-	d.Conn.Model(&Account{}).Where("id = ?", id).Update("banned", true)
+func (d *DB) BanAccount(id int64) error {
+	return d.Conn.Model(&Account{}).Where("id = ?", id).Update("banned", true).Error
 }
