@@ -73,6 +73,8 @@ func (h *Handler) Send(reqCtx *fasthttp.RequestCtx) {
 		return
 	}
 
+	h.dbConn.UpdateAccountHost(accFrom.ID, msg.FromHost)
+
 	req, resp := fasthttp.AcquireRequest(), fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)

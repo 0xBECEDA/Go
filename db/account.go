@@ -61,7 +61,7 @@ func (d *DB) FindAccountByID(id int, acc *Account) error {
 	return d.Conn.Debug().Find(acc, "id = ?", id).Error
 }
 
-func (d *DB) UpdateAccountHost(id int, host string) error {
+func (d *DB) UpdateAccountHost(id int64, host string) error {
 	return d.Conn.Model(&Account{}).Where("id = ?", id).Update("host", host).Error
 }
 

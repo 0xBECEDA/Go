@@ -43,17 +43,13 @@ func GetClientId() error {
 }
 
 func ConnectToServer() (*net.TCPConn, error) {
-
-	serVaddr := "localhost:3425"
+	serVaddr := "localhost:8080"
 	tcpAddr, err := net.ResolveTCPAddr("tcp", serVaddr)
 
 	if err != nil {
-		println("ResolveTCPAddr failed:", err.Error())
 		return nil, err
 
 	} else {
-
-		// fmt.Printf( "Client tcp addr: %v \n",  tcpAddr)
 		connect, err := net.DialTCP("tcp", nil, tcpAddr)
 
 		if err != nil {
@@ -314,7 +310,8 @@ func driverLoop(wg *sync.WaitGroup, DoneChannel chan string, connect *net.TCPCon
 		}
 	}
 }
-func main() {
+
+/*func main() {
 
 	// Tests ()
 
@@ -332,7 +329,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Have a connection with server \n")
+	fmt.Printf("Have a connection with http \n")
 	var wg sync.WaitGroup
 	// отслеживаем, сколько "живых" диалогов
 	DoneChannel := make(chan string, 100)
@@ -342,3 +339,4 @@ func main() {
 	go driverLoop(&wg, DoneChannel, connect)
 	wg.Wait()
 }
+*/

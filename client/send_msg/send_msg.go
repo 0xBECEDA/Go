@@ -37,3 +37,27 @@ func SendMessage(ch chan internal.Message, serverAddr string) {
 		}
 	}
 }
+
+func Authorize(message *internal.AuthorizeMessage, serverAddr string) (int, error) {
+	var client fasthttp.Client
+
+	for {
+		data, err := jsoniter.Marshal(&message)
+		if err != nil {
+			fmt.Errorf("can't marshal msg, error %v", err)
+		}
+
+		req, resp := fasthttp.AcquireRequest(), fasthttp.AcquireResponse()
+		defer fasthttp.ReleaseRequest(req)
+		defer fasthttp.ReleaseResponse(resp)
+
+		req.Header.SetMethod(fasthttp.MethodPost)
+		req.SetRequestURI("http://" + serverAddr + "/authorize")
+		req.SetBody(data)
+
+		if err := client.Do(req, resp); err != nil {
+			fmt.Errorf("authorization failed, error %v", err)
+			return resp.StatusCode(), err
+		}
+	}
+}

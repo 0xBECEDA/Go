@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"messanger/server/handlers/authorize"
 	"messanger/server/handlers/register"
 	"messanger/server/handlers/route"
 	"runtime"
@@ -14,18 +15,20 @@ import (
 )
 
 type Server struct {
-	config       Config
-	server       *fasthttp.Server
-	routeHandler *route.Handler
-	regHandler   *register.Handler
-	logger       *zap.Logger
+	config           Config
+	server           *fasthttp.Server
+	routeHandler     *route.Handler
+	regHandler       *register.Handler
+	authorizeHandler *authorize.Handler
+	logger           *zap.Logger
 }
 
-func New(cfg Config, logger *zap.Logger, handler *route.Handler, handler2 *register.Handler) *Server {
+func New(cfg Config, logger *zap.Logger, handler *route.Handler, handler2 *register.Handler, handler3 *authorize.Handler) *Server {
 	s := &Server{
-		config:       cfg,
-		routeHandler: handler,
-		regHandler:   handler2,
+		config:           cfg,
+		routeHandler:     handler,
+		regHandler:       handler2,
+		authorizeHandler: handler3,
 		server: &fasthttp.Server{
 			TCPKeepalivePeriod: 20 * time.Second,
 			MaxRequestsPerConn: cfg.MaxConn,
@@ -41,6 +44,7 @@ func New(cfg Config, logger *zap.Logger, handler *route.Handler, handler2 *regis
 
 	r.POST("/send", s.routeHandler.Send)
 	r.POST("/reg", s.regHandler.RegisterNewUser)
+	r.POST("/authorize", s.authorizeHandler.Authorize)
 
 	s.server.Handler = r.Handler
 	return s

@@ -8,11 +8,22 @@ import (
 	"strings"
 )
 
-func EnterUserName() string {
+func EnterHost() string {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Enter your host for yor server:")
+	host, _ := reader.ReadString('\n')
+	return host
+}
+
+func Authorize(host string) *internal.AuthorizeMessage {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Enter your user name:")
 	name, _ := reader.ReadString('\n')
-	return name
+
+	return &internal.AuthorizeMessage{
+		Name: name,
+		Host: host,
+	}
 }
 
 func GetInput(ch chan internal.Message, myUserName string) {

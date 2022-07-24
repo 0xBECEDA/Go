@@ -18,14 +18,15 @@ type Server struct {
 	host          string
 }
 
-func New(logger *zap.Logger, handler *Handler) *Server {
+func New(logger *zap.Logger, handler *Handler, host string) *Server {
 	s := &Server{
 		server: &fasthttp.Server{
 			TCPKeepalivePeriod: 20 * time.Second,
 			MaxRequestsPerConn: 24,
 		},
-		getMsgHandler: handler,
 		logger:        logger,
+		getMsgHandler: handler,
+		host:          host,
 	}
 
 	r := router.New()
