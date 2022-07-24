@@ -1,8 +1,8 @@
 package route
 
 import (
-	"encoding/json"
 	"errors"
+	jsoniter "github.com/json-iterator/go"
 	"go.uber.org/zap"
 	"messanger/db"
 
@@ -16,14 +16,9 @@ var (
 )
 
 type MessageFrom struct {
-	FromID int
-	ToID   int
-	Data   []byte
-}
-
-type MessageTo struct {
-	FromID int
-	Data   []byte
+	FromID int    `json:"from_id"`
+	ToID   int    `json:"to_id"`
+	Data   string `json:"data"`
 }
 
 type Handler struct {
@@ -43,26 +38,24 @@ func New(logger *zap.Logger, db *db.DB) *Handler {
 
 func (h *Handler) Send(reqCtx *fasthttp.RequestCtx) {
 	var (
-		msg     *MessageFrom
-		accFrom *db.Account
-		accTo   *db.Account
+		msg     MessageFrom
+		accFrom db.Account
+		accTo   db.Account
 	)
 
 	data := reqCtx.Request.Body()
-
-	err := json.Unmarshal(data, msg)
-	if err != nil {
+	if err := jsoniter.Unmarshal(data, &msg); err != nil {
 		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
 		_, _ = reqCtx.Write([]byte(err.Error()))
 		return
 	}
 
-	if err := h.dbConn.FindAccountByID(msg.FromID, accFrom); err != nil {
+	if err := h.dbConn.FindAccountByID(msg.FromID, &accFrom); err != nil {
 		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
 		_, _ = reqCtx.Write([]byte(err.Error()))
 	}
 
-	if accFrom == nil {
+	if accFrom.ID <= 0 {
 		reqCtx.SetStatusCode(fasthttp.StatusBadRequest)
 		_, _ = reqCtx.Write([]byte(ErrNoSuchUser.Error()))
 		return
@@ -74,12 +67,12 @@ func (h *Handler) Send(reqCtx *fasthttp.RequestCtx) {
 		return
 	}
 
-	if err := h.dbConn.FindAccountByID(msg.ToID, accTo); err != nil {
+	if err := h.dbConn.FindAccountByID(msg.ToID, &accTo); err != nil {
 		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
 		_, _ = reqCtx.Write([]byte(err.Error()))
 	}
 
-	if accTo == nil {
+	if accTo.ID <= 0 {
 		reqCtx.SetStatusCode(fasthttp.StatusNoContent)
 		_, _ = reqCtx.Write([]byte(ErrFriendNotFound.Error()))
 		return
@@ -88,16 +81,6 @@ func (h *Handler) Send(reqCtx *fasthttp.RequestCtx) {
 	req, resp := fasthttp.AcquireRequest(), fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)
-
-	data, err = json.Marshal(MessageTo{
-		FromID: msg.FromID,
-		Data:   msg.Data,
-	})
-	if err != nil {
-		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
-		_, _ = reqCtx.Write([]byte(err.Error()))
-		return
-	}
 
 	req.Header.SetMethod(fasthttp.MethodGet)
 	req.SetRequestURI("http://" + accTo.Host)

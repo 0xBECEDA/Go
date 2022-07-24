@@ -23,7 +23,7 @@ var (
 	ErrEmailIsAlreadyUsed  = errors.New("email is already used")
 )
 
-func (d *DB) CreateAccount(name, email string) error {
+func (d *DB) CreateAccount(name, email, host string) error {
 	var acc Account
 	if err := d.FindAccountByEmail(email, &acc); err != nil {
 		return err
@@ -42,6 +42,7 @@ func (d *DB) CreateAccount(name, email string) error {
 
 	acc.UserName = name
 	acc.UserEmail = email
+	acc.Host = host
 	acc.CreatedAt = time.Now().UTC()
 	acc.LastActiveAt = time.Now().UTC()
 
