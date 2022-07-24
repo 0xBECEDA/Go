@@ -2,11 +2,12 @@ package route
 
 import (
 	"errors"
-	jsoniter "github.com/json-iterator/go"
-	"go.uber.org/zap"
 	"messanger/db"
+	"messanger/internal"
 
+	jsoniter "github.com/json-iterator/go"
 	"github.com/valyala/fasthttp"
+	"go.uber.org/zap"
 )
 
 var (
@@ -14,12 +15,6 @@ var (
 	ErrNoSuchUser     = errors.New("no user is found")
 	ErrFriendNotFound = errors.New("your friend is not found")
 )
-
-type MessageFrom struct {
-	FromID int    `json:"from_id"`
-	ToID   int    `json:"to_id"`
-	Data   string `json:"data"`
-}
 
 type Handler struct {
 	logger *zap.Logger
@@ -38,7 +33,7 @@ func New(logger *zap.Logger, db *db.DB) *Handler {
 
 func (h *Handler) Send(reqCtx *fasthttp.RequestCtx) {
 	var (
-		msg     MessageFrom
+		msg     internal.Message
 		accFrom db.Account
 		accTo   db.Account
 	)
@@ -50,7 +45,7 @@ func (h *Handler) Send(reqCtx *fasthttp.RequestCtx) {
 		return
 	}
 
-	if err := h.dbConn.FindAccountByID(msg.FromID, &accFrom); err != nil {
+	if err := h.dbConn.FindAccountByUserName(msg.FromName, &accFrom); err != nil {
 		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
 		_, _ = reqCtx.Write([]byte(err.Error()))
 	}
@@ -67,7 +62,7 @@ func (h *Handler) Send(reqCtx *fasthttp.RequestCtx) {
 		return
 	}
 
-	if err := h.dbConn.FindAccountByID(msg.ToID, &accTo); err != nil {
+	if err := h.dbConn.FindAccountByUserName(msg.ToName, &accTo); err != nil {
 		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
 		_, _ = reqCtx.Write([]byte(err.Error()))
 	}
@@ -83,7 +78,7 @@ func (h *Handler) Send(reqCtx *fasthttp.RequestCtx) {
 	defer fasthttp.ReleaseResponse(resp)
 
 	req.Header.SetMethod(fasthttp.MethodGet)
-	req.SetRequestURI("http://" + accTo.Host)
+	req.SetRequestURI("http://" + accTo.Host + "/get_msg")
 	req.SetBody(data)
 
 	if err := h.client.Do(req, resp); err != nil {
