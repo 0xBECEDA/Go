@@ -62,7 +62,7 @@ func (d *DB) FindAccountByID(id int, acc *Account) error {
 }
 
 func (d *DB) UpdateAccountHost(id int64, host string) error {
-	return d.Conn.Model(&Account{}).Where("id = ?", id).Update("host", host).Error
+	return d.Conn.Debug().Model(&Account{}).Where("id = ?", id).Update("host", host).Error
 }
 
 func (d *DB) BanAccount(id int64) error {

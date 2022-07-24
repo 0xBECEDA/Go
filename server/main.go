@@ -4,6 +4,7 @@ import (
 	"context"
 	"messanger/config"
 	"messanger/db"
+	"messanger/server/handlers/authorize"
 	"messanger/server/handlers/register"
 	"messanger/server/handlers/route"
 	"messanger/server/server"
@@ -33,8 +34,9 @@ func main() {
 
 	routeHandler := route.New(l, dbConn)
 	regHandler := register.New(l, dbConn)
+	authorizeHandeler := authorize.New(l, dbConn)
 
-	serv := server.New(serverCfg, l, routeHandler, regHandler)
+	serv := server.New(serverCfg, l, routeHandler, regHandler, authorizeHandeler)
 	serv.Start()
 	defer serv.Stop(5 * time.Second)
 

@@ -12,7 +12,7 @@ func EnterHost() string {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Enter your host for yor server:")
 	host, _ := reader.ReadString('\n')
-	return host
+	return strings.Trim(host, "\n")
 }
 
 func Authorize(host string) *internal.AuthorizeMessage {
@@ -21,7 +21,7 @@ func Authorize(host string) *internal.AuthorizeMessage {
 	name, _ := reader.ReadString('\n')
 
 	return &internal.AuthorizeMessage{
-		Name: name,
+		Name: strings.Trim(name, "\n"),
 		Host: host,
 	}
 }

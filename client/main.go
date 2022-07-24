@@ -20,13 +20,12 @@ func main() {
 	ctx := context.Background()
 
 	host := write_msg.EnterHost()
-
 	server := http.New(l, &http.Handler{Logger: l}, host)
 	server.Start()
 	defer server.Stop(5 * time.Second)
 
 	msg := write_msg.Authorize(host)
-	respCode, err := send_msg.Authorize(msg, host)
+	respCode, err := send_msg.Authorize(msg, addr)
 	if err != nil || respCode != fasthttp.StatusOK {
 		fmt.Errorf("error during authorisation: response code %v, error %v", respCode, err)
 		return
