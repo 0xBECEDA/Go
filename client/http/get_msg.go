@@ -22,7 +22,7 @@ func (h *Handler) GetMessage(reqCtx *fasthttp.RequestCtx) {
 
 	reqCtx.SetStatusCode(fasthttp.StatusOK)
 
-	fmt.Printf("You got message from user %s!", msg.FromName)
+	fmt.Printf("You got message from user %s!\n", msg.FromName)
 	fmt.Println(string(msg.Data))
 	return
 }

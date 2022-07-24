@@ -79,7 +79,7 @@ func (h *Handler) Send(reqCtx *fasthttp.RequestCtx) {
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)
 
-	req.Header.SetMethod(fasthttp.MethodGet)
+	req.Header.SetMethod(fasthttp.MethodPost)
 	req.SetRequestURI("http://" + accTo.Host + "/get_msg")
 	req.SetBody(data)
 
