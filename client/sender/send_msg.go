@@ -30,9 +30,7 @@ func SendMessage(ch chan internal.Message, serverAddr string) {
 			fmt.Errorf("message is't delivered, error %v", err)
 			return
 		}
-		if resp.StatusCode() == fasthttp.StatusOK {
-			fmt.Println("message successfully delivered")
-		} else {
+		if resp.StatusCode() != fasthttp.StatusOK {
 			fmt.Printf("message is't delivered, response code %v", resp.StatusCode())
 		}
 	}

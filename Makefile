@@ -1,6 +1,4 @@
-all:
-	go build server.go
-	go build client.go
+all: start_infra migrate
 
 start_infra:
 	docker-compose up -d
