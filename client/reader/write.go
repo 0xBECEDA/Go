@@ -1,4 +1,4 @@
-package write_msg
+package reader
 
 import (
 	"bufio"
@@ -23,6 +23,22 @@ func Authorize(host string) *internal.AuthorizeMessage {
 	return &internal.AuthorizeMessage{
 		Name: strings.Trim(name, "\n"),
 		Host: host,
+	}
+}
+
+func SignUp(host string) *internal.AuthorizeMessage {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Please sign up: enter your user name and email")
+	fmt.Println("Enter your user name:")
+	name, _ := reader.ReadString('\n')
+
+	fmt.Println("Enter your email:")
+	email, _ := reader.ReadString('\n')
+
+	return &internal.AuthorizeMessage{
+		Name:  strings.Trim(name, "\n"),
+		Email: strings.Trim(email, "\n"),
+		Host:  host,
 	}
 }
 

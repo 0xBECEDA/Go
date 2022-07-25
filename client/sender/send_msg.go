@@ -1,4 +1,4 @@
-package send_msg
+package sender
 
 import (
 	"fmt"
@@ -52,6 +52,29 @@ func Authorize(message *internal.AuthorizeMessage, serverAddr string) (int, erro
 
 	req.Header.SetMethod(fasthttp.MethodPost)
 	req.SetRequestURI("http://" + serverAddr + "/authorize")
+	req.SetBody(data)
+
+	err = client.Do(req, resp)
+	if string(resp.Body()) == internal.ErrAuthorization.Error() {
+		return resp.StatusCode(), internal.ErrAuthorization
+	}
+	return resp.StatusCode(), err
+}
+
+func SignUp(message *internal.AuthorizeMessage, serverAddr string) (int, error) {
+	var client fasthttp.Client
+
+	data, err := jsoniter.Marshal(&message)
+	if err != nil {
+		fmt.Errorf("can't marshal msg, error %v", err)
+	}
+
+	req, resp := fasthttp.AcquireRequest(), fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+
+	req.Header.SetMethod(fasthttp.MethodPost)
+	req.SetRequestURI("http://" + serverAddr + "/reg")
 	req.SetBody(data)
 
 	err = client.Do(req, resp)

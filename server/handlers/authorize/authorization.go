@@ -27,22 +27,21 @@ func (h *Handler) Authorize(reqCtx *fasthttp.RequestCtx) {
 		acc db.Account
 	)
 	if err := jsoniter.Unmarshal(reqCtx.Request.Body(), &msg); err != nil {
-		reqCtx.SetStatusCode(fasthttp.StatusBadRequest)
-		_, _ = reqCtx.Write([]byte(err.Error()))
+		reqCtx.Error(err.Error(), fasthttp.StatusInternalServerError)
+		return
 	}
-
 	if err := h.dbConn.FindAccountByUserName(msg.Name, &acc); err != nil {
-		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
-		_, _ = reqCtx.Write([]byte(err.Error()))
+		reqCtx.Error(err.Error(), fasthttp.StatusInternalServerError)
+		return
 	}
 	if acc.ID <= 0 {
-		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
-		_, _ = reqCtx.Write([]byte("please register!"))
+		reqCtx.Error(internal.ErrAuthorization.Error(), fasthttp.StatusBadRequest)
+		return
 	}
 
 	if err := h.dbConn.UpdateAccountHost(acc.ID, msg.Host); err != nil {
-		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
-		_, _ = reqCtx.Write([]byte(err.Error()))
+		reqCtx.Error(err.Error(), fasthttp.StatusBadRequest)
+		return
 	}
 	reqCtx.SetStatusCode(fasthttp.StatusOK)
 }

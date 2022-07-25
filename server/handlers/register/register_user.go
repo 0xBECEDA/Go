@@ -6,6 +6,7 @@ import (
 	"github.com/valyala/fasthttp"
 	"go.uber.org/zap"
 	"messanger/db"
+	"messanger/internal"
 )
 
 var (
@@ -18,12 +19,6 @@ type Handler struct {
 	dbConn *db.DB
 }
 
-type regMsg struct {
-	Name  string
-	Email string
-	Host  string
-}
-
 func New(logger *zap.Logger, dbConn *db.DB) *Handler {
 	return &Handler{
 		logger: logger,
@@ -32,7 +27,7 @@ func New(logger *zap.Logger, dbConn *db.DB) *Handler {
 }
 
 func (h *Handler) RegisterNewUser(reqCtx *fasthttp.RequestCtx) {
-	var msg regMsg
+	var msg internal.AuthorizeMessage
 	if err := jsoniter.Unmarshal(reqCtx.Request.Body(), &msg); err != nil {
 		reqCtx.SetStatusCode(fasthttp.StatusBadRequest)
 		_, _ = reqCtx.Write([]byte(err.Error()))
@@ -51,7 +46,7 @@ func (h *Handler) RegisterNewUser(reqCtx *fasthttp.RequestCtx) {
 	}
 
 	if err := h.dbConn.CreateAccount(msg.Name, msg.Email, msg.Host); err != nil {
-		reqCtx.SetStatusCode(fasthttp.StatusBadRequest)
+		reqCtx.SetStatusCode(fasthttp.StatusInternalServerError)
 		_, _ = reqCtx.Write([]byte(err.Error()))
 		return
 	}
