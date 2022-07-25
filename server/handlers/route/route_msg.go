@@ -20,7 +20,7 @@ type Handler struct {
 	logger *zap.Logger
 	dbConn *db.DB
 	client *fasthttp.Client
-	// TODO добавить коннект к реббиту
+	// TODO: add rabbitMQ to keep messages, which couldn't be delivered
 }
 
 func New(logger *zap.Logger, db *db.DB) *Handler {
